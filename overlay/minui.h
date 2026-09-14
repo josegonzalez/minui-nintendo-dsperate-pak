@@ -83,9 +83,4 @@ private:
   std::string shared_dir_;    // .minui
 };
 
-// A 32-bit BI_RGB BMP from a tightly packed RGBA byte buffer -- the same
-// layout write_png() composes, so the two share one composer. Free of SDL and
-// of every emulator type so tests/bmp_test.cpp can drive it directly.
-bool write_bmp(const u8* rgba, int w, int h, const std::string& path);
-
 } // namespace ds::sdl

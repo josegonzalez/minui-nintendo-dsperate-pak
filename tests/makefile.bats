@@ -179,19 +179,13 @@ load test_helper
     # be in the tree first or the build fails at the CMake target_sources line.
     mk OVERLAY
     [ -n "$output" ]
-    for f in minui.h minui.cpp minui_bmp.cpp bmp_test.cpp; do
+    for f in minui.h minui.cpp; do
         [ -f "$REPO_ROOT/overlay/$f" ] || return 1
     done
     copy_line="$(grep -n 'OVERLAY)/minui' "$REPO_ROOT/Makefile" | head -1 | cut -d: -f1)"
     patch_line="$(grep -n 'for p in $(PATCHES)/\*.patch' "$REPO_ROOT/Makefile" | head -1 | cut -d: -f1)"
     [ -n "$copy_line" ] && [ -n "$patch_line" ]
     [ "$copy_line" -lt "$patch_line" ]
-}
-
-@test "the bitmap writer stays free of SDL so its test can run in a container" {
-    # The container has no loadable libSDL2; linking it would make the test
-    # unrunnable there, which is why this lives in its own translation unit.
-    ! grep -q "SDL" <(grep -v "^//" "$REPO_ROOT/overlay/minui_bmp.cpp")
 }
 
 @test "the GCC 8 workarounds are still present" {
@@ -207,6 +201,11 @@ load test_helper
     # A patch that creates files conflicts far more readily on a tag bump, and
     # the Makefile copies the vendored sources in instead.
     ! grep -q "new file mode" "$p"
+    # Thumbnails reuse the emulator's own PNG writer. Both launchers read them
+    # with IMG_Load, which sniffs magic rather than the extension, so there is
+    # no reason to carry an image encoder of our own.
+    ! grep -q "write_bmp" "$p"
+    [ ! -f "$REPO_ROOT/overlay/minui_bmp.cpp" ]
 }
 
 @test "bump-version refuses to run without a version" {

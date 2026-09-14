@@ -8,21 +8,24 @@ an upstream tag, which matters because DSperate ships tags weekly.
 
 What it changes:
 
-  CMakeLists.txt      builds minui.cpp and minui_bmp.cpp into dsperate, via
-                      target_sources rather than the add_executable list so a
-                      change to either never conflicts with the other.
+  CMakeLists.txt      builds minui.cpp into dsperate, via target_sources rather
+                      than the add_executable list so a change to either never
+                      conflicts with the other.
   main.cpp            polls the power button once a frame (short press sleeps,
                       a held press quits through the ordinary exit path so the
                       battery save and auto state are written); writes the
                       launcher's slot thumbnail and marker whenever the player
-                      saves or loads a user slot; splits the frame composition
-                      out of write_png so the bitmap writer shares it; adds the
-                      emu.state_key option; renames screenshots.
+                      saves or loads a user slot; adds the emu.state_key
+                      option; renames screenshots.
   input.{h,cpp}       a game_switcher hotkey action, unbound by default because
                       mod+back is already layout_next upstream. A launcher that
                       wants it binds it in its own config.
   config.cpp          documents emu.state_key.
-  tests/CMakeLists    builds tests/bmp_test.cpp, also copied in by the Makefile.
+
+Thumbnails go through the existing write_png() at the .bmp path the launcher
+looks for, which is exactly what NextUI itself writes there: both frontends
+load them with IMG_Load, which dispatches on the magic bytes rather than the
+extension. write_png is otherwise untouched.
 
 emu.state_key defaults to "code", so an upstream build behaves exactly as it
 did. "rom" keys states on the ROM filename instead, which is what a launcher
@@ -33,7 +36,7 @@ The screenshot rename is not configurable: <GAMECODE>-<timestamp>.png became
 what every other system on the card writes.
 
 diff --git a/src/frontend/sdl/CMakeLists.txt b/src/frontend/sdl/CMakeLists.txt
-index 59a2f4d..4915564 100644
+index 59a2f4d..06350bd 100644
 --- a/src/frontend/sdl/CMakeLists.txt
 +++ b/src/frontend/sdl/CMakeLists.txt
 @@ -2,6 +2,10 @@
@@ -43,7 +46,7 @@ index 59a2f4d..4915564 100644
 +# MinUI/NextUI launcher integration: native power button, game-switcher
 +# artifacts. Vendored by minui-nintendo-dsperate-pak, added here rather than to
 +# the add_executable list above so the two never conflict on a rebase.
-+target_sources(dsperate PRIVATE minui.cpp minui_bmp.cpp)
++target_sources(dsperate PRIVATE minui.cpp)
  # RetroAchievements, when it is built at all. The frontend is the only consumer;
  # with DSPERATE_CHEEVOS off the macro is undefined and main.cpp compiles as it
  # did before any of this existed.
@@ -100,7 +103,7 @@ index a2f7a08..7f6a227 100644
  const char* action_name(Action a);
  
 diff --git a/src/frontend/sdl/main.cpp b/src/frontend/sdl/main.cpp
-index 29ea903..07ba0e6 100644
+index 29ea903..e2ff54c 100644
 --- a/src/frontend/sdl/main.cpp
 +++ b/src/frontend/sdl/main.cpp
 @@ -27,6 +27,7 @@
@@ -111,41 +114,7 @@ index 29ea903..07ba0e6 100644
  #include "loader_cart.h"
  #include "menu.h"
  
-@@ -239,13 +240,15 @@ void write_save(NDS& nds, const std::string& path) {
- // seams, which a screenshot of the game does not want. On a scanline tier
- // those framebuffers are only filled by an unscaled frame, which is why the
- // hotkey defers a frame (shot_pending). Straight RGBA, alpha forced opaque.
--bool write_png(NDS& nds, const std::string& path, const ds::sdl::Display::Layout& layout) {
-+bool compose_frame_rgba(NDS& nds, const ds::sdl::Display::Layout& layout,
-+                        std::vector<u8>& rgba, int& out_w, int& out_h) {
-   using Disp = ds::sdl::Display;
-   int w = 0, h = 0;
-   Disp::natural_size(layout, 1.0, w, h);
-+  if (w <= 0 || h <= 0) return false;
-   Disp::View views[Disp::SCREENS];
-   Disp::place(layout, w, h, views);
--  std::vector<u8> rgba(static_cast<size_t>(w) * h * 4, 0);
-+  rgba.assign(static_cast<size_t>(w) * h * 4, 0);
-   for (int i = 0; i < Disp::SCREENS; ++i) {
-     const Disp::View& v = views[i];
-     if (!v.shown || v.rect.w <= 0 || v.rect.h <= 0) continue;
-@@ -274,6 +277,15 @@ bool write_png(NDS& nds, const std::string& path, const ds::sdl::Display::Layout
-       }
-     }
-   }
-+  out_w = w;
-+  out_h = h;
-+  return true;
-+}
-+
-+bool write_png(NDS& nds, const std::string& path, const ds::sdl::Display::Layout& layout) {
-+  int w = 0, h = 0;
-+  std::vector<u8> rgba;
-+  if (!compose_frame_rgba(nds, layout, rgba, w, h)) return false;
-   size_t len = 0;
-   void* png = tdefl_write_image_to_png_file_in_memory_ex(rgba.data(), w, h, 4, &len, 6 /* zlib default level */, MZ_FALSE);
-   if (!png) { std::fprintf(stderr, "png: cannot encode\n"); return false; }
-@@ -286,42 +298,73 @@ bool write_png(NDS& nds, const std::string& path, const ds::sdl::Display::Layout
+@@ -286,42 +287,73 @@ bool write_png(NDS& nds, const std::string& path, const ds::sdl::Display::Layout
    return true;
  }
  
@@ -235,7 +204,7 @@ index 29ea903..07ba0e6 100644
    FILE* f = std::fopen(path.c_str(), "rb");
    if (!f) return {};
    std::fclose(f);
-@@ -1449,6 +1492,13 @@ sdl_ready:
+@@ -1449,6 +1481,13 @@ sdl_ready:
    // cheats -- lives here, so that launching a game from the loader cart can
    // re-derive the lot rather than keep writing the loader's.
    Session session;
@@ -249,7 +218,7 @@ index 29ea903..07ba0e6 100644
    session.open(nds, cfg, rom_path, save_arg);
  
    nds.sched.set_quantum(quantum);
-@@ -1505,7 +1555,7 @@ sdl_ready:
+@@ -1505,7 +1544,7 @@ sdl_ready:
    // them: the log is the inputs from boot).
    const std::string autoload = load_state || log.reading() || log.writing()
                                     ? std::string()
@@ -258,7 +227,7 @@ index 29ea903..07ba0e6 100644
    if (load_state || !autoload.empty()) {
      const char* start_state = load_state ? load_state : autoload.c_str();
      bool got_layout = false;
-@@ -1524,6 +1574,8 @@ sdl_ready:
+@@ -1524,6 +1563,8 @@ sdl_ready:
        if (log.reading()) { ds::input::Frame f; for (u64 k = 0; k < nds.frame_count && log.read(f); ++k) {} }
      }
    }
@@ -267,7 +236,7 @@ index 29ea903..07ba0e6 100644
    ds::sdl::Lid lid;
    if (!replay) lid.open();
    std::vector<s16> mic, mic_raw, mic_queue;
-@@ -1659,7 +1711,7 @@ sdl_ready:
+@@ -1659,7 +1700,7 @@ sdl_ready:
    // from the panel.
    bool shot_pending = false;
    auto refresh_slots = [&] { for (int i = 0; i < 10; ++i) {
@@ -276,7 +245,7 @@ index 29ea903..07ba0e6 100644
      menu.set_slot_used(i, f != nullptr);
      if (f) std::fclose(f);
    }
-@@ -1679,6 +1731,21 @@ sdl_ready:
+@@ -1679,6 +1720,21 @@ sdl_ready:
    // unscaled frame (the pause stop, a screenshot frame, the renderer tier)
    // and not after a scanline-tier frame, whose lines went to the panel.
    bool fb_current = false;
@@ -286,19 +255,19 @@ index 29ea903..07ba0e6 100644
 +  // ones the switcher never lists, so they are skipped.
 +  auto minui_slot_saved = [&](int slot) {
 +    if (!minui.active()) return;
-+    const std::string bmp = minui.slot_thumbnail_path(slot);
-+    if (bmp.empty()) return;
-+    int w = 0, h = 0;
-+    std::vector<u8> rgba;
-+    if (compose_frame_rgba(nds, display.current_layout(), rgba, w, h))
-+      ds::sdl::write_bmp(rgba.data(), w, h, bmp);
++    const std::string path = minui.slot_thumbnail_path(slot);
++    if (path.empty()) return;
++    // A PNG under a .bmp name, which is what NextUI itself writes there: the
++    // launcher loads it with IMG_Load, which dispatches on the magic bytes and
++    // not the extension.
++    write_png(nds, path, display.current_layout());
 +    minui.write_slot_marker(slot);
 +  };
 +
    auto autosave_now = [&] {
      if (!autosave || save_readonly || log.writing()) return;
      // The thumbnail is the game's picture without the panel effects, like a
-@@ -1691,12 +1758,12 @@ sdl_ready:
+@@ -1691,12 +1747,12 @@ sdl_ready:
        nds.run_frame();
        fb_current = true;
      }
@@ -313,7 +282,7 @@ index 29ea903..07ba0e6 100644
      if (write_png(nds, png, display.current_layout())) std::fprintf(stderr, "state: thumbnail %s\n", png.c_str());
    };
    // A loaded state's view, applied the way the layout hotkeys apply theirs.
-@@ -2507,6 +2574,27 @@ sdl_ready:
+@@ -2507,6 +2563,27 @@ sdl_ready:
    while (!input.quit() && !g_signalled && (frame_limit == 0 || frames < static_cast<u64>(frame_limit))) {
      SDL_Event e;
      while (SDL_PollEvent(&e)) input.handle(e, display, dual_window ? &display2 : nullptr);
@@ -341,7 +310,7 @@ index 29ea903..07ba0e6 100644
      for (ds::sdl::Action a : input.take_actions()) {
        using A = ds::sdl::Action;
        switch (a) {
-@@ -2558,14 +2646,27 @@ sdl_ready:
+@@ -2558,14 +2635,27 @@ sdl_ready:
          if (!session.game_ini.empty()) ds::sdl::Config::store(session.game_ini, "video.pip_corner", Disp::corner_name(l.corner));
          break;
        }
@@ -371,7 +340,7 @@ index 29ea903..07ba0e6 100644
            show_slot("STATE " + std::to_string(state_slot) + " SAVED");
          }
          break;
-@@ -2573,12 +2674,13 @@ sdl_ready:
+@@ -2573,12 +2663,13 @@ sdl_ready:
          if (save_readonly) { std::fprintf(stderr, "state: not during a replay\n"); break; }
          // A recording is the inputs from boot; a load would leave it unreplayable.
          if (log.writing()) { std::fprintf(stderr, "state: not while recording\n"); break; }
@@ -386,7 +355,7 @@ index 29ea903..07ba0e6 100644
            show_slot("STATE " + std::to_string(state_slot) + " LOADED");
          }
          break;
-@@ -2620,9 +2722,10 @@ sdl_ready:
+@@ -2620,9 +2711,10 @@ sdl_ready:
          // which a load would leave unreplayable.
          case Menu::Result::Save:
            if (save_readonly) std::fprintf(stderr, "state: not during a replay\n");
@@ -398,7 +367,7 @@ index 29ea903..07ba0e6 100644
            }
            refresh_slots();
            break;
-@@ -2631,7 +2734,7 @@ sdl_ready:
+@@ -2631,7 +2723,7 @@ sdl_ready:
            if (log.writing()) { std::fprintf(stderr, "state: not while recording\n"); break; }
            // A load replaces the picture the menu is drawn over, so it also
            // leaves the menu: the player wants to see where they landed.
@@ -407,7 +376,7 @@ index 29ea903..07ba0e6 100644
              apply_loaded_layout();
              state_slot = menu.slot();
              menu.set_open(false);
-@@ -2677,7 +2780,7 @@ sdl_ready:
+@@ -2677,7 +2769,7 @@ sdl_ready:
            // wins, and never during a replay or a recording.
            if (const std::string a = log.reading() || log.writing()
                                          ? std::string()
@@ -416,7 +385,7 @@ index 29ea903..07ba0e6 100644
                !a.empty() && load_state_file(nds, a, loaded_layout, got_layout)) {
              std::fprintf(stderr, "state: autoloaded %s\n", a.c_str());
              apply_loaded_layout();
-@@ -3109,7 +3212,7 @@ sdl_ready:
+@@ -3109,7 +3201,7 @@ sdl_ready:
      // An unscaled frame is in fb_: the picture the screenshot wants.
      if (shot_pending && present) {
        shot_pending = false;
@@ -425,7 +394,7 @@ index 29ea903..07ba0e6 100644
        flash_left = FLASH_FRAMES;   // from the next frame: this one is already on the panel and in the file
      }
      // The frame the menu will sit on is presented and, because it went down
-@@ -3285,6 +3388,7 @@ sdl_ready:
+@@ -3285,6 +3377,7 @@ sdl_ready:
    }
    log.close();
    ds::prof::report();
@@ -433,18 +402,3 @@ index 29ea903..07ba0e6 100644
    lid.close();
    mic_alsa.close();
    input.close();
-diff --git a/tests/CMakeLists.txt b/tests/CMakeLists.txt
-index 7d85482..85fbcca 100644
---- a/tests/CMakeLists.txt
-+++ b/tests/CMakeLists.txt
-@@ -108,3 +108,10 @@ if(DSPERATE_CHEEVOS)
-   target_link_libraries(test_cheevos_client PRIVATE dsperate_cheevos)
-   add_test(NAME cheevos_client COMMAND test_cheevos_client)
- endif()
-+
-+# The vendored MinUI module's bitmap writer. minui_bmp.cpp is its own
-+# translation unit precisely so this links without SDL, and so runs in a build
-+# container where libSDL2 cannot be loaded.
-+add_executable(test_bmp bmp_test.cpp ../src/frontend/sdl/minui_bmp.cpp)
-+target_include_directories(test_bmp PRIVATE ../src)
-+add_test(NAME bmp COMMAND test_bmp)

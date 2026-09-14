@@ -114,10 +114,8 @@ clone: $(SRC)/DSperate
 $(SRC)/DSperate:
 	git clone --depth 1 --branch $(DSPERATE_TAG) $(DSPERATE_REPO) $@
 	@# The MinUI module is vendored here rather than patched in, so patch 0003
-	@# only ever modifies files upstream already has. Runtime sources go beside
-	@# the frontend, the unit test beside the other tests.
-	cp $(OVERLAY)/minui.h $(OVERLAY)/minui.cpp $(OVERLAY)/minui_bmp.cpp $@/src/frontend/sdl/
-	cp $(OVERLAY)/bmp_test.cpp $@/tests/
+	@# only ever modifies files upstream already has.
+	cp $(OVERLAY)/minui.h $(OVERLAY)/minui.cpp $@/src/frontend/sdl/
 	@# A patch that no longer applies is fatal: a drifted patch must not produce
 	@# a green build with the workaround silently missing.
 	cd $@ && for p in $(PATCHES)/*.patch; do \

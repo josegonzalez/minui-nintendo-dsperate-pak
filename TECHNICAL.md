@@ -106,7 +106,7 @@ Dependabot only covers Actions; `DSPERATE_TAG` is manual, and upstream ships tag
 
 ## The MinUI integration
 
-`overlay/minui.{h,cpp}` plus `overlay/minui_bmp.cpp` are vendored here and copied into the
+`overlay/minui.{h,cpp}` is vendored here and copied into the
 DSperate tree by the `clone` rule; `patches/0003-minui-integration.patch` only ever modifies files
 upstream already has. That split is deliberate: a patch that creates files conflicts far more
 readily on a tag bump, and 0003 is the patch most likely to need a rebase.
@@ -162,10 +162,12 @@ hidden default, and 9 is the sleep autosave, which maps onto DSperate's own `.au
 minarch means the sleep path writes no thumbnail and no marker — the switcher resolves its picture
 through the marker, which only ever holds 0-7.
 
-Thumbnails are real BMP rather than PNG-in-a-`.bmp`-name. NextUI writes the latter and reads with
-`IMG_Load`, which sniffs magic, but MinUI writes real BMP and we cannot assume its SDL_image has
-PNG. `minui_bmp.cpp` is its own translation unit with no SDL in it, so `tests/bmp_test.cpp` links
-and runs inside the build container, where libSDL2 cannot be loaded.
+Thumbnails are written with DSperate's own `write_png()`, at the `.bmp` path the launcher looks
+for. That is not a mismatch: NextUI writes PNG bytes into that same name (`ma_menu.c:1604`,
+`IMG_SavePNG_RW`) and MinUI writes a real BMP (`minarch.c:4148`), and both read with `IMG_Load`,
+which dispatches on the magic bytes rather than the extension. MinUI's SDL_image certainly has PNG
+— it loads its own UI atlas that way at `common/api.c:150` — so there is no reason for the pak to
+carry an image encoder of its own.
 
 ## Known rough edges
 
