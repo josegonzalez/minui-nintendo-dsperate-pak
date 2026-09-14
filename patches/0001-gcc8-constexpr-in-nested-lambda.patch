@@ -1,0 +1,25 @@
+Work around a GCC 8 defect: a constexpr local of an enclosing lambda used in
+an `if constexpr` inside a nested lambda is wrongly treated as a capture, and
+rejected with "lambda capture of 'NH' is not a constant expression". Fixed in
+GCC 9; the NextUI cross toolchain is GCC 8.3.0.
+
+NH is declared as `constexpr u32 NH = decltype(nh_c)::value;` in the enclosing
+`step` lambda and read here from the nested `group` lambda. Naming the type
+directly is the same value with no odr-use, so nothing needs capturing. The
+other NH reads in `group` are ordinary odr-uses that GCC 8 accepts.
+
+Upstream: https://github.com/beebono/DSperate/issues/1
+
+diff --git a/src/core/gpu/render3d.cpp b/src/core/gpu/render3d.cpp
+index c53bed3..4a44136 100644
+--- a/src/core/gpu/render3d.cpp
++++ b/src/core/gpu/render3d.cpp
+@@ -1664,7 +1664,7 @@ template <int mode, bool textured, bool aa, bool opq>
+           u32 t0, t1 = 0;
+           uint32x4_t pre[2];
+           pre[0] = prefix_exclusive(vandq_u32(mo[0], vdupq_n_u32(1)), &t0);
+-          if constexpr (NH == 2) pre[1] = vaddq_u32(prefix_exclusive(vandq_u32(mo[1], vdupq_n_u32(1)), &t1), vdupq_n_u32(t0));
++          if constexpr (decltype(nh_c)::value == 2) pre[1] = vaddq_u32(prefix_exclusive(vandq_u32(mo[1], vdupq_n_u32(1)), &t1), vdupq_n_u32(t0));
+           for (u32 k = 0; k < NH; ++k) {
+             const uint32x4_t xc = vshrq_n_u32(vmlaq_u32(vdupq_n_u32(static_cast<u32>(xcov)), pre[k], vdupq_n_u32(static_cast<u32>(cov_step))), 5);
+             uint32x4_t cov;

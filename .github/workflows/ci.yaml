@@ -1,0 +1,118 @@
+---
+name: "ci"
+
+# yamllint disable-line rule:truthy
+on:
+  pull_request:
+    branches:
+      - "*"
+  push:
+    branches:
+      - main
+
+permissions:
+  attestations: write
+  id-token: write
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: test
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install bats
+        run: sudo apt-get update && sudo apt-get install -y bats
+
+      - name: Run shell tests
+        run: make test
+
+  build:
+    name: build
+    runs-on: ubuntu-24.04-arm
+    # A full-source C++17 emulator across three platforms plus a ctest build is
+    # nothing like an incremental plugin build, and the 360 minute default means
+    # a hung docker pull burns six hours.
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup QEMU
+        uses: docker/setup-qemu-action@v4
+
+      - name: Set up Docker Buildx
+        id: buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Create release
+        run: make clean build release
+
+      - name: Get Pak Name
+        id: pak-name
+        run: |
+          echo "PAK_NAME=$(jq -r .name pak.json)" >> $GITHUB_OUTPUT
+
+      - name: Attest Build Provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: "dist/${{ steps.pak-name.outputs.PAK_NAME }}.pak.zip"
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: "${{ steps.pak-name.outputs.PAK_NAME }}.pak.zip"
+          path: "dist/${{ steps.pak-name.outputs.PAK_NAME }}.pak.zip"
+
+  test-release:
+    name: test-release
+    runs-on: ubuntu-24.04
+    needs: build
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Get Pak Name
+        id: pak-name
+        run: |
+          echo "PAK_NAME=$(jq -r .name pak.json)" >> $GITHUB_OUTPUT
+
+      - name: Download Artifacts
+        uses: actions/download-artifact@v8
+        with:
+          name: "${{ steps.pak-name.outputs.PAK_NAME }}.pak.zip"
+          path: "dist"
+
+      - name: Validate Artifact exists
+        run: |
+          if [ ! -f "dist/${{ steps.pak-name.outputs.PAK_NAME }}.pak.zip" ]; then
+            echo "Artifact does not exist"
+            exit 1
+          fi
+
+      - name: Validate every platform binary is bundled
+        run: |
+          zip="dist/${{ steps.pak-name.outputs.PAK_NAME }}.pak.zip"
+          for platform in $(jq -r '.platforms[]' pak.json); do
+            if ! unzip -l "$zip" | grep -q "$platform/dsperate"; then
+              echo "$platform/dsperate is missing from the artifact"
+              exit 1
+            fi
+          done
+          for f in configs/no-sticks.ini configs/one-stick.ini configs/two-sticks.ini LICENSE.DSperate; do
+            if ! unzip -l "$zip" | grep -q "$f"; then
+              echo "$f is missing from the artifact"
+              exit 1
+            fi
+          done

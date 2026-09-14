@@ -1,0 +1,152 @@
+---
+name: "release"
+
+# yamllint disable-line rule:truthy
+on:
+  workflow_dispatch:
+    inputs:
+      bump_type:
+        description: "Bump type"
+        default: "patch"
+        required: true
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+
+permissions:
+  attestations: write
+  id-token: write
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  version:
+    name: version
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.next-tag.outputs.version }}
+      dsperate_tag: ${{ steps.upstream.outputs.DSPERATE_TAG }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Get Latest Tag
+        id: latest-tag
+        run: |
+          echo GIT_LATEST_TAG="$(git describe --tags "$(git rev-list --tags --max-count=1)")" >>"$GITHUB_OUTPUT"
+
+      - name: Compute Next Tag
+        id: next-tag
+        uses: docker://ghcr.io/dokku/semver-generator:latest
+        with:
+          bump: ${{ github.event.inputs.bump_type }}
+          input: ${{ steps.latest-tag.outputs.GIT_LATEST_TAG }}
+
+      # GPLv3 makes "which upstream commit is this" a question the release page
+      # should answer, not just dsperate.build-info inside the zip.
+      - name: Get Upstream Tag
+        id: upstream
+        run: |
+          echo "DSPERATE_TAG=$(make --no-print-directory print-DSPERATE_TAG | cut -d= -f2)" >> $GITHUB_OUTPUT
+
+  build:
+    name: build
+    runs-on: ubuntu-24.04-arm
+    needs: version
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup QEMU
+        uses: docker/setup-qemu-action@v4
+
+      - name: Set up Docker Buildx
+        id: buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Create release
+        run: make clean build release
+        env:
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
+
+      - name: Get Pak Name
+        id: pak-name
+        run: |
+          echo "PAK_NAME=$(jq -r .name pak.json)" >> $GITHUB_OUTPUT
+
+      - name: Attest Build Provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: "dist/${{ steps.pak-name.outputs.PAK_NAME }}.pak.zip"
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: "${{ steps.pak-name.outputs.PAK_NAME }}.pak.zip"
+          path: "dist/${{ steps.pak-name.outputs.PAK_NAME }}.pak.zip"
+
+  release:
+    name: release
+    runs-on: ubuntu-24.04
+    needs:
+      - version
+      - build
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Get Pak Name
+        id: pak-name
+        run: |
+          echo "PAK_NAME=$(jq -r .name pak.json)" >> $GITHUB_OUTPUT
+
+      - name: Download Artifacts
+        uses: actions/download-artifact@v8
+        with:
+          name: "${{ steps.pak-name.outputs.PAK_NAME }}.pak.zip"
+          path: "dist"
+
+      - name: Validate Artifact exists
+        run: |
+          if [ ! -f "dist/${{ steps.pak-name.outputs.PAK_NAME }}.pak.zip" ]; then
+            echo "Artifact does not exist"
+            exit 1
+          fi
+
+      - name: Create and Push Tag
+        run: |
+          make bump-version
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add pak.json
+          git commit -m "Release $RELEASE_VERSION"
+          git tag "$RELEASE_VERSION"
+          git push origin "$RELEASE_VERSION"
+          git push origin main
+        env:
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
+
+      - name: Release
+        uses: softprops/action-gh-release@v3
+        with:
+          files: dist/*
+          body: |
+            Built from DSperate
+            [${{ needs.version.outputs.dsperate_tag }}](https://github.com/beebono/DSperate/releases/tag/${{ needs.version.outputs.dsperate_tag }}),
+            GPLv3. See `dsperate.build-info` in the pak for the exact commit and build flags.
+          generate_release_notes: true
+          make_latest: "true"
+          tag_name: ${{ needs.version.outputs.version }}
