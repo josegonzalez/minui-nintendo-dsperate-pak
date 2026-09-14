@@ -167,11 +167,46 @@ load test_helper
     grep -q 'git apply "$$p"' "$REPO_ROOT/Makefile"
 }
 
+@test "minui-power-control is gone" {
+    # Deep sleep is native now, and that binary has no h700 support anyway.
+    ! grep -q "minui-power-control" "$REPO_ROOT/Makefile"
+    ! grep -q "MINUI_POWER_CONTROL" "$REPO_ROOT/Makefile"
+    ! grep -q "minui-power-control" "$REPO_ROOT/launch.sh"
+}
+
+@test "the vendored MinUI module is copied in before the patches apply" {
+    # Patch 0003 only modifies files upstream already has, so the module has to
+    # be in the tree first or the build fails at the CMake target_sources line.
+    mk OVERLAY
+    [ -n "$output" ]
+    for f in minui.h minui.cpp minui_bmp.cpp bmp_test.cpp; do
+        [ -f "$REPO_ROOT/overlay/$f" ] || return 1
+    done
+    copy_line="$(grep -n 'OVERLAY)/minui' "$REPO_ROOT/Makefile" | head -1 | cut -d: -f1)"
+    patch_line="$(grep -n 'for p in $(PATCHES)/\*.patch' "$REPO_ROOT/Makefile" | head -1 | cut -d: -f1)"
+    [ -n "$copy_line" ] && [ -n "$patch_line" ]
+    [ "$copy_line" -lt "$patch_line" ]
+}
+
+@test "the bitmap writer stays free of SDL so its test can run in a container" {
+    # The container has no loadable libSDL2; linking it would make the test
+    # unrunnable there, which is why this lives in its own translation unit.
+    ! grep -q "SDL" <(grep -v "^//" "$REPO_ROOT/overlay/minui_bmp.cpp")
+}
+
 @test "the GCC 8 workarounds are still present" {
     # Both are compiler bugs, not upstream ones: drop them when the toolchain
     # moves past GCC 8, not before.
     [ -f "$REPO_ROOT/patches/0001-gcc8-constexpr-in-nested-lambda.patch" ]
     [ -f "$REPO_ROOT/patches/0002-gcc8-neon-scale-row-grid-miscompile.patch" ]
+}
+
+@test "the MinUI integration patch is present and adds no files" {
+    p="$REPO_ROOT/patches/0003-minui-integration.patch"
+    [ -f "$p" ]
+    # A patch that creates files conflicts far more readily on a tag bump, and
+    # the Makefile copies the vendored sources in instead.
+    ! grep -q "new file mode" "$p"
 }
 
 @test "bump-version refuses to run without a version" {

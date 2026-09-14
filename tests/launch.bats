@@ -152,3 +152,61 @@ setup() {
     [ "$XDG_CONFIG_HOME" = "$DSP_USERDATA_DIR" ]
     [ "$DSP_CONFIG" = "$DSP_USERDATA_DIR/dsperate/dsperate.ini" ]
 }
+
+@test "the launcher's file keys are exported, with the extension kept" {
+    # minarch keys every .minui artifact on the basename *with* extension.
+    [ "$MINUI_ROM_FILE" = "" ] || true
+    ROM_PATH="$SDCARD_PATH/Roms/Nintendo DS (DSP)/Some Game (USA).nds"
+    dsp_init_env
+    [ "$MINUI_ROM_FILE" = "Some Game (USA).nds" ]
+    [ "$MINUI_ROM_PATH" = "/Roms/Nintendo DS (DSP)/Some Game (USA).nds" ]
+    [ "$MINUI_DIR" = "$SHARED_USERDATA_PATH/.minui/DSP" ]
+    [ "$MINUI_SHARED_DIR" = "$SHARED_USERDATA_PATH/.minui" ]
+}
+
+@test "auto-resume is skipped rather than wrong for a ROM outside the card" {
+    # An absolute path here becomes /mnt/SDCARD/mnt/SDCARD/... in the frontend
+    # and the resume silently never fires, so exporting nothing is the safer
+    # failure.
+    unset MINUI_ROM_PATH
+    ROM_PATH="/somewhere/else/Game.nds"
+    dsp_init_env
+    [ -z "${MINUI_ROM_PATH:-}" ]
+}
+
+@test "a plain launch does not resume, even though autoload is on" {
+    # minarch writes 8 for "start fresh". Without this the shipped autoload
+    # would resume anyway and the launcher's choice would be ignored.
+    echo -n "8" >/tmp/resume_slot.txt
+    ROM_PATH="$SDCARD_PATH/Roms/Nintendo DS (DSP)/Game.nds"
+    dsp_resume_args
+    [ "$DSP_RESUME_ARGS" = "--no-autoload" ]
+    [ ! -f /tmp/resume_slot.txt ]
+}
+
+@test "the sleep slot is left to autoload" {
+    echo -n "9" >/tmp/resume_slot.txt
+    ROM_PATH="$SDCARD_PATH/Roms/Nintendo DS (DSP)/Game.nds"
+    dsp_resume_args
+    [ -z "$DSP_RESUME_ARGS" ]
+    [ ! -f /tmp/resume_slot.txt ]
+}
+
+@test "a user slot resumes from the state named after the ROM" {
+    # The stem has to match what emu.state_key = rom produces, or the launcher
+    # asks for a file the emulator never wrote.
+    grep -q "^state_key = rom" "$PAK_DIR/configs/no-sticks.ini"
+    echo -n "3" >/tmp/resume_slot.txt
+    ROM_PATH="$SDCARD_PATH/Roms/Nintendo DS (DSP)/Some Game.nds"
+    dsp_init_env
+    dsp_resume_args
+    [ "$DSP_RESUME_ARGS" = "--load-state $DSP_STATES_DIR/Some Game.3.dss" ]
+    [ ! -f /tmp/resume_slot.txt ]
+}
+
+@test "no resume marker means no resume flags" {
+    rm -f /tmp/resume_slot.txt
+    ROM_PATH="$SDCARD_PATH/Roms/Nintendo DS (DSP)/Game.nds"
+    dsp_resume_args
+    [ -z "$DSP_RESUME_ARGS" ]
+}

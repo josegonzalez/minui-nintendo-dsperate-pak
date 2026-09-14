@@ -93,15 +93,6 @@ profile_for() {
     [ -z "$PROFILE_LD_DIRS" ]
 }
 
-@test "deep sleep is gated to the platforms minui-power-control supports" {
-    profile_for tg5040 brick
-    [ "$PROFILE_POWER" = "1" ]
-    profile_for tg5050 ""
-    [ "$PROFILE_POWER" = "1" ]
-    profile_for h700 rg35xxplus
-    [ "$PROFILE_POWER" = "0" ]
-}
-
 @test "an unsupported platform yields no profile at all" {
     profile_for miyoomini ""
     [ -z "$PROFILE_INI" ]

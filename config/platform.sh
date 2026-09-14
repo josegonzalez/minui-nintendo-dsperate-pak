@@ -50,20 +50,17 @@ DSP_MAP_H700_NOSTICK='a:b3,b:b4,x:b5,y:b6,back:b9,guide:b11,start:b10,leftshould
 #   PROFILE_MAP      the SDL GameController mapping body
 #   PROFILE_ROTATE   DS_ROTATE value, empty for none
 #   PROFILE_LD_DIRS  extra LD_LIBRARY_PATH entries, space separated
-#   PROFILE_POWER    1 when minui-power-control supports this platform
 dsp_platform_profile() {
     _platform="$1"
     _device="$2"
 
     PROFILE_ROTATE=""
     PROFILE_LD_DIRS=""
-    PROFILE_POWER=0
 
     case "$_platform" in
     tg5040)
         # SDL2 lives outside the pak on TrimUI.
         PROFILE_LD_DIRS="/usr/trimui/lib"
-        PROFILE_POWER=1
         case "$_device" in
         # The Brick is the one TrimUI device with no sticks at all.
         brick)
@@ -78,14 +75,10 @@ dsp_platform_profile() {
         ;;
     tg5050)
         PROFILE_LD_DIRS="/usr/trimui/lib"
-        PROFILE_POWER=1
         PROFILE_INI="two-sticks"
         PROFILE_MAP="$DSP_MAP_TRIMUI"
         ;;
     h700)
-        # minui-power-control has no h700 support, so the power button keeps
-        # its default behaviour there.
-        PROFILE_POWER=0
         case "${_device:-rg35xxplus}" in
         rg35xxh | rg35xxpro | rg40xxh | rgcubexx | rg34xxsp)
             PROFILE_INI="two-sticks"

@@ -49,6 +49,26 @@ dsp_init_env() {
 
     export PATH="$BIN_DIR:$PAK_DIR:$PATH"
 
+    # What the launcher's game switcher reads. The key everywhere is the ROM's
+    # basename *with* its extension, which is what minarch itself keys on.
+    MINUI_SHARED_DIR="$SHARED_USERDATA_PATH/.minui"
+    MINUI_DIR="$MINUI_SHARED_DIR/DSP"
+    export MINUI_SHARED_DIR MINUI_DIR
+    MINUI_ROM_FILE="$(basename "$ROM_PATH")"
+    export MINUI_ROM_FILE
+    # auto_resume.txt holds the path relative to the card, and the frontend
+    # rebuilds it with a bare concat. An absolute path here becomes
+    # /mnt/SDCARD/mnt/SDCARD/... and the resume silently never happens, so it
+    # is better to export nothing than to export something wrong.
+    case "$ROM_PATH" in
+    "$SDCARD_PATH"/*)
+        export MINUI_ROM_PATH="${ROM_PATH#"$SDCARD_PATH"}"
+        ;;
+    *)
+        echo "ROM is outside $SDCARD_PATH, so auto-resume is unavailable: $ROM_PATH"
+        ;;
+    esac
+
     # Bundled first, then the SDL2 and friends NextUI installs, then whatever the
     # platform profile adds (/usr/trimui/lib on TrimUI), then the inherited value.
     DSP_LD_PATH="$BIN_DIR:$SDCARD_PATH/.system/$PLATFORM/lib"
@@ -118,13 +138,33 @@ dsp_seed_config() {
     sync
 }
 
-dsp_start_power_control() {
-    if [ "$PROFILE_POWER" != "1" ]; then
-        echo "minui-power-control does not support $PLATFORM, deep sleep is unavailable"
-        return 0
-    fi
+# The launcher asks for a state through /tmp/resume_slot.txt, and the file is
+# consumed. Its slots are minarch's: 0-7 are the player's, 8 means "plain
+# launch, start fresh", 9 is the state written before a sleep -- which here is
+# DSperate's own hidden auto slot, so autoload already resumes it.
+#
+# This matters because the shipped config has autoload on: without translating
+# the marker, picking a game fresh from the launcher would resume it anyway.
+dsp_resume_args() {
+    DSP_RESUME_ARGS=""
+    [ -f /tmp/resume_slot.txt ] || return 0
 
-    minui-power-control dsperate &
+    _slot="$(cat /tmp/resume_slot.txt 2>/dev/null | tr -dc '0-9')"
+    rm -f /tmp/resume_slot.txt
+
+    case "$_slot" in
+    "" | 9)
+        # Let autoload pick up the auto slot.
+        ;;
+    8)
+        DSP_RESUME_ARGS="--no-autoload"
+        ;;
+    *)
+        _stem="$(basename "$ROM_PATH")"
+        _stem="${_stem%.*}"
+        DSP_RESUME_ARGS="--load-state $DSP_STATES_DIR/$_stem.$_slot.dss"
+        ;;
+    esac
 }
 
 cleanup() {
@@ -155,6 +195,15 @@ main() {
         return 1
     fi
 
+    # Before dsp_init_env, which derives the launcher's file keys from it.
+    # Some builds hand the pak a /media/SDCARD0 path for the same card, and a
+    # symlinked Roms folder is common, so resolve both: the MinUI artifacts are
+    # keyed on this and the launcher will not match a path it did not write.
+    ROM_PATH="$(echo "$1" | sed "s|/media/SDCARD0/|$SDCARD_PATH/|g")"
+    if [ -e "$ROM_PATH" ]; then
+        ROM_PATH="$(readlink -f "$ROM_PATH")"
+    fi
+
     # shellcheck source=/dev/null
     . "$PAK_DIR/platform.sh"
     dsp_platform_profile "$PLATFORM" "${DEVICE:-}"
@@ -165,7 +214,8 @@ main() {
     trap "cleanup" EXIT INT TERM HUP QUIT
 
     mkdir -p "$DSP_USERDATA_DIR" "$DSP_CONFIG_DIR" "$DSP_SAVES_DIR" \
-        "$DSP_STATES_DIR" "$DSP_SCREENSHOTS_DIR" "$DSP_CHEATS_DIR" "$DSP_BIOS_DIR"
+        "$DSP_STATES_DIR" "$DSP_SCREENSHOTS_DIR" "$DSP_CHEATS_DIR" "$DSP_BIOS_DIR" \
+        "$MINUI_SHARED_DIR" "$MINUI_DIR"
 
     dsp_seed_config
     dsp_export_pad_mapping
@@ -176,16 +226,15 @@ main() {
         export DS_ROTATE="$PROFILE_ROTATE"
     fi
 
-    ROM_PATH="$1"
-
-    dsp_start_power_control
+    dsp_resume_args
 
     # No --config: the seeded file is already at the default path DSperate
     # computes from XDG_CONFIG_HOME. No layout or performance flags either --
     # flags override the ini, which would make them uneditable from the pause
     # menu.
     cd "$BIN_DIR" || return 1
-    ./dsperate "$ROM_PATH" --fullscreen
+    # shellcheck disable=SC2086 # DSP_RESUME_ARGS is a deliberate word list
+    ./dsperate "$ROM_PATH" --fullscreen $DSP_RESUME_ARGS
 }
 
 if [ "${DSP_PAK_TEST:-}" != "1" ]; then

@@ -68,6 +68,7 @@ MENU acts as the modifier for every chord.
 - MENU + X: Toggle the FPS counter
 - MENU + L2: Swap which screen is the large one
 - MENU + R2: Toggle fast forward
+- MENU + SELECT: Save and return to the launcher's game switcher
 - R2 (two-stick and one-stick devices): Hold for fast forward
 - L2: Tap the stylus at the pen's position
 - R2 (no-stick devices): Hold to move the pen with the d-pad
@@ -75,17 +76,24 @@ MENU acts as the modifier for every chord.
 ## Saves & States
 
 - Game saves are stored in `/Saves/DSP/`.
-- Save states are stored in `/.userdata/shared/DSP-dsperate/`.
-- Screenshots are written to `/Screenshots/`.
+- Save states are stored in `/.userdata/shared/DSP-dsperate/`, named after the rom.
+- Screenshots are written to `/Screenshots/`, named the way every other system on the card names them.
 - Cheats are read from `/Cheats/DSP/usrcheat.dat` if present.
 
-The pak turns on DSperate's autosave and autoload, so quitting through the launcher writes a state and the next launch resumes from it.
+Saving or loading a state also leaves the launcher a thumbnail, so the game shows up in the game switcher and offers RESUME when you next open it.
+
+Quitting through the launcher writes a state, and the next launch picks it back up.
 
 ## Deep Sleep & Shutdown
 
-Deep sleep is supported on `tg5040` and `tg5050`. Click the power button to enter deep sleep, click again to resume. To shut down, hold the power button for 2 seconds. For more information, see [MinUI Power Control](https://github.com/ben16w/minui-power-control).
+Deep sleep is handled by the emulator itself, on all three platforms.
 
-MinUI Power Control does not support `h700`, so the power button keeps its default behaviour on those devices.
+Tap the power button to sleep: the screen and sound go off and the game is held exactly where it was. Tap again to wake. After two minutes asleep the device suspends to RAM to save the battery, and the power button still wakes it.
+
+Hold the power button for a second to shut down. Unlike a plain kill, this writes the battery save and a resume state first, and the launcher picks that game back up the next time you turn the device on.
+
+> [!NOTE]
+> Earlier versions of this pak bundled [MinUI Power Control](https://github.com/ben16w/minui-power-control) for this. It is no longer used or shipped: it has no `h700` support, and it cannot save the game on shutdown.
 
 ## Debug Logging
 

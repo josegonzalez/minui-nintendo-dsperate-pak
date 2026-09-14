@@ -65,6 +65,10 @@ Both current patches are **GCC 8 compiler bugs, not upstream bugs**. Drop them w
 
 **`0001-gcc8-constexpr-in-nested-lambda.patch`** — GCC 8 treats a `constexpr` local of an enclosing lambda, read in an `if constexpr` inside a nested lambda, as a capture, and rejects it: `lambda capture of 'NH' is not a constant expression`, 97 times in `render3d.cpp`. Fixed in GCC 9. Naming the type directly is the same value with no odr-use. Reported upstream as [beebono/DSperate#1](https://github.com/beebono/DSperate/issues/1).
 
+**`0003-minui-integration.patch`** is not a compiler workaround and does not go away: it is the
+launcher integration described below. It is the patch most likely to need a rebase on a tag bump,
+which is why the logic it wires in lives in `overlay/` rather than in the patch itself.
+
 **`0002-gcc8-neon-scale-row-grid-miscompile.patch`** — GCC 8 miscompiles the NEON `scale_row_grid` kernel. Bisected with `-mcpu` held constant so the compiler was the only variable:
 
 | Compiler | `-mcpu` | `gpu` / `kernels` |
@@ -99,6 +103,69 @@ Dependabot only covers Actions; `DSPERATE_TAG` is manual, and upstream ships tag
 2. Read the upstream release notes for CMake option changes. A renamed switch fails open, because CMake ignores unknown `-D` cache args, and `assert-build.sh` is the only thing that would catch the consequence.
 3. `make clean build`. Both patches must still apply; if one does not, check whether upstream fixed it before rebasing.
 4. Re-measure the ABI table above if the toolchain images have moved.
+
+## The MinUI integration
+
+`overlay/minui.{h,cpp}` plus `overlay/minui_bmp.cpp` are vendored here and copied into the
+DSperate tree by the `clone` rule; `patches/0003-minui-integration.patch` only ever modifies files
+upstream already has. That split is deliberate: a patch that creates files conflicts far more
+readily on a tag bump, and 0003 is the patch most likely to need a rebase.
+
+### The power button is read from evdev, not SDL
+
+`minui-n64-pak` reads it as SDL scancode 102, which works because GLideN64 runs on a real video
+driver. DSperate does not: on the disp and fbdev tiers it forces a headless SDL video driver
+(`go_headless()`), whose window never takes keyboard focus, and `KEY_POWER` sits on its own evdev
+node that SDL's keyboard backend does not surface either way. So the module opens
+`/dev/input/event*` directly and looks for `EV_KEY`/`KEY_POWER`, modelled on DSperate's own
+`lid.cpp`. Nothing contends for it — NextUI's keymon opens those nodes read-only without
+`EVIOCGRAB` and handles no power code.
+
+Backlight is one mechanism for all three platforms: `/sys/class/backlight/backlight0/brightness`
+if it is there, otherwise `/dev/disp` ioctl `DISP_LCD_SET_BRIGHTNESS` (`0x102`). That ioctl is what
+NextUI's own `libmsettings` uses on both tg5040 and h700. There is no read side to it, so where
+sysfs cannot be read the module recovers the level from NextUI's `minuisettings.txt` rather than
+waking to a hardcoded guess the user never chose.
+
+`/sys/class/speaker/mute` is TrimUI-only and the write is best effort; h700 has no such node.
+
+### The artifact contract
+
+Keys are the ROM basename **with** its extension, which is what minarch keys on. `<EMU>` is `DSP`,
+from the last parenthesised group of the Roms folder.
+
+| Artifact | Path | Content |
+| --- | --- | --- |
+| Battery save | `/Saves/DSP/<rom stem>.sav` | DSperate's own |
+| Save state | `$SHARED_USERDATA_PATH/DSP-dsperate/<rom stem>.<slot>.dss` | `emu.state_key = rom` |
+| Slot thumbnail | `.minui/DSP/<rom.ext>.<0-7>.bmp` | 32-bit BI_RGB BMP |
+| Slot marker | `.minui/DSP/<rom.ext>.txt` | one ASCII int, no newline |
+| Resume after sleep | `.minui/auto_resume.txt` | card-relative ROM path, no newline |
+| Game switcher | `.minui/game_switcher.txt` | existence only |
+| Resume request | `/tmp/resume_slot.txt` | read and consumed by launch.sh |
+| Screenshot | `/Screenshots/<display name>.<YYYY-MM-DD-HH-MM-SS>.png` | PNG |
+
+Three things here are silent when wrong, so they have tests:
+
+- **No trailing newline** on `auto_resume.txt` or the slot marker. The frontend concatenates
+  without trimming, so one `\n` makes the resume quietly never happen. The module uses `fputs`;
+  shell must use `printf '%s'`, never `echo`.
+- **The ROM path must be card-relative.** An absolute path becomes `/mnt/SDCARD/mnt/SDCARD/...`
+  and is dropped. launch.sh exports nothing rather than something wrong when the ROM is outside
+  the card.
+- **`autoload` alone is not enough.** minarch writes `8` to `/tmp/resume_slot.txt` for a plain
+  launch, meaning "start fresh"; with the shipped `autoload = true` the pak would resume anyway,
+  so launch.sh translates the marker into `--load-state` or `--no-autoload`.
+
+Slots follow minarch: 0-7 are the player's and are the only ones the switcher lists, 8 is its
+hidden default, and 9 is the sleep autosave, which maps onto DSperate's own `.auto` slot. Matching
+minarch means the sleep path writes no thumbnail and no marker — the switcher resolves its picture
+through the marker, which only ever holds 0-7.
+
+Thumbnails are real BMP rather than PNG-in-a-`.bmp`-name. NextUI writes the latter and reads with
+`IMG_Load`, which sniffs magic, but MinUI writes real BMP and we cannot assume its SDL_image has
+PNG. `minui_bmp.cpp` is its own translation unit with no SDL in it, so `tests/bmp_test.cpp` links
+and runs inside the build container, where libSDL2 cannot be loaded.
 
 ## Known rough edges
 

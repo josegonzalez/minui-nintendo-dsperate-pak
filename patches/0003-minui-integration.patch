@@ -1,0 +1,450 @@
+Wire the vendored MinUI module into the frontend, and make the artifacts the
+launcher reads match what it expects.
+
+The module itself lives in overlay/ in the pak repo and is copied into the tree
+by the Makefile before this patch is applied, so nothing here adds a file. That
+keeps the patch to modifications of existing ones and small enough to rebase on
+an upstream tag, which matters because DSperate ships tags weekly.
+
+What it changes:
+
+  CMakeLists.txt      builds minui.cpp and minui_bmp.cpp into dsperate, via
+                      target_sources rather than the add_executable list so a
+                      change to either never conflicts with the other.
+  main.cpp            polls the power button once a frame (short press sleeps,
+                      a held press quits through the ordinary exit path so the
+                      battery save and auto state are written); writes the
+                      launcher's slot thumbnail and marker whenever the player
+                      saves or loads a user slot; splits the frame composition
+                      out of write_png so the bitmap writer shares it; adds the
+                      emu.state_key option; renames screenshots.
+  input.{h,cpp}       a game_switcher hotkey action, unbound by default because
+                      mod+back is already layout_next upstream. A launcher that
+                      wants it binds it in its own config.
+  config.cpp          documents emu.state_key.
+  tests/CMakeLists    builds tests/bmp_test.cpp, also copied in by the Makefile.
+
+emu.state_key defaults to "code", so an upstream build behaves exactly as it
+did. "rom" keys states on the ROM filename instead, which is what a launcher
+keys its own files on, and stops two hacks of one game sharing slots.
+
+The screenshot rename is not configurable: <GAMECODE>-<timestamp>.png became
+<display name>.<YYYY-MM-DD-HH-MM-SS>.png, which is what minarch writes and so
+what every other system on the card writes.
+
+diff --git a/src/frontend/sdl/CMakeLists.txt b/src/frontend/sdl/CMakeLists.txt
+index 59a2f4d..4915564 100644
+--- a/src/frontend/sdl/CMakeLists.txt
++++ b/src/frontend/sdl/CMakeLists.txt
+@@ -2,6 +2,10 @@
+ add_executable(dsperate main.cpp config.cpp display.cpp audio.cpp input.cpp menu.cpp settings.cpp lid.cpp mic_alsa.cpp loader_cart.cpp dmaheap.cpp
+   display_drm.cpp display_disp.cpp display_fbdev.cpp)
+ target_link_libraries(dsperate PRIVATE dsperate_core ${SDL2_LIBRARIES} ${CMAKE_DL_LIBS})
++# MinUI/NextUI launcher integration: native power button, game-switcher
++# artifacts. Vendored by minui-nintendo-dsperate-pak, added here rather than to
++# the add_executable list above so the two never conflict on a rebase.
++target_sources(dsperate PRIVATE minui.cpp minui_bmp.cpp)
+ # RetroAchievements, when it is built at all. The frontend is the only consumer;
+ # with DSPERATE_CHEEVOS off the macro is undefined and main.cpp compiles as it
+ # did before any of this existed.
+diff --git a/src/frontend/sdl/config.cpp b/src/frontend/sdl/config.cpp
+index 4257517..55dc874 100644
+--- a/src/frontend/sdl/config.cpp
++++ b/src/frontend/sdl/config.cpp
+@@ -279,6 +279,10 @@ R"(# DSperate settings. Command-line flags override this file. Two files next
+                                 # Faster loading screens; games that race the card can misbehave
+ # idle_skip = 1                 # skip a CPU busy-wait: 0 = never | 1 = only the GXSTAT swap poll |
+                                 # all = every proven poll loop
++# state_key = code              # what a state file is named after: code (the four-letter game
++                                # code) or rom (the ROM's filename without its extension). rom is
++                                # what a launcher wants, since it keys its own files the same way,
++                                # and it stops two hacks of one game sharing slots
+ # autosave = false              # on quit, save a state to the hidden "auto" slot
+                                 # (<states>/<GAMECODE>.auto.dss). Covers Ctrl-C and a launcher's
+                                 # SIGTERM, not SIGKILL. Resume with autoload below (or --load-state
+diff --git a/src/frontend/sdl/input.cpp b/src/frontend/sdl/input.cpp
+index e49862c..8d44fb8 100644
+--- a/src/frontend/sdl/input.cpp
++++ b/src/frontend/sdl/input.cpp
+@@ -26,12 +26,15 @@ const char* const kPadDefaults[B::BTN_COUNT] = {"b", "a", "back", "start", "dpri
+ 
+ const char* const kActionNames[static_cast<int>(Action::Count)] = {
+   "quit", "pause", "fast_forward", "fast_forward_toggle", "save_state", "load_state", "slot_next", "slot_prev",
+-  "volume_up", "volume_down", "mute", "layout_next", "layout_prev", "screen_swap", "pip_corner_next", "fullscreen", "screenshot", "lid", "mic", "fps"};
++  "volume_up", "volume_down", "mute", "layout_next", "layout_prev", "screen_swap", "pip_corner_next", "fullscreen", "screenshot", "lid", "mic", "fps",
++  "game_switcher"};
+ const char* const kKeyHotDefaults[static_cast<int>(Action::Count)] = {
+-  "Escape", "p", "Tab", "none", "F5", "F7", "F3", "F2", "=", "-", "0", "F4", "F10", "F6", "F8", "f", "F9", "l", "m", "none"};
++  "Escape", "p", "Tab", "none", "F5", "F7", "F3", "F2", "=", "-", "0", "F4", "F10", "F6", "F8", "f", "F9", "l", "m", "none",
++  "none"};
+ const char* const kPadHotDefaults[static_cast<int>(Action::Count)] = {
+   "mod+start+back", "mod+start", "mod++righttrigger", "none", "mod+rightshoulder", "mod+leftshoulder", "mod+dpright", "mod+dpleft",
+-  "none", "none", "none", "mod+back", "mod+x", "mod+y", "none", "none", "none", "none", "leftstick", "none"};
++  "none", "none", "none", "mod+back", "mod+x", "mod+y", "none", "none", "none", "none", "leftstick", "none",
++  "none"};
+ 
+ // The controls that are not a DS button and not a hotkey: the hotkey modifier
+ // and the pad-driven pen. The Controls page shows them as rows of their own,
+diff --git a/src/frontend/sdl/input.h b/src/frontend/sdl/input.h
+index a2f7a08..7f6a227 100644
+--- a/src/frontend/sdl/input.h
++++ b/src/frontend/sdl/input.h
+@@ -17,7 +17,8 @@ class Config;
+ // Things a hotkey can do. The frontend drains them once a frame.
+ enum class Action : u8 {
+   Quit, Pause, FastForward, FastForwardToggle, SaveState, LoadState, SlotNext, SlotPrev,
+-  VolumeUp, VolumeDown, Mute, LayoutNext, LayoutPrev, ScreenSwap, PipCornerNext, Fullscreen, Screenshot, Lid, Mic, FpsToggle, Count
++  VolumeUp, VolumeDown, Mute, LayoutNext, LayoutPrev, ScreenSwap, PipCornerNext, Fullscreen, Screenshot, Lid, Mic, FpsToggle,
++  GameSwitcher, Count
+ };
+ const char* action_name(Action a);
+ 
+diff --git a/src/frontend/sdl/main.cpp b/src/frontend/sdl/main.cpp
+index 29ea903..07ba0e6 100644
+--- a/src/frontend/sdl/main.cpp
++++ b/src/frontend/sdl/main.cpp
+@@ -27,6 +27,7 @@
+ #include "display.h"
+ #include "input.h"
+ #include "lid.h"
++#include "minui.h"
+ #include "loader_cart.h"
+ #include "menu.h"
+ 
+@@ -239,13 +240,15 @@ void write_save(NDS& nds, const std::string& path) {
+ // seams, which a screenshot of the game does not want. On a scanline tier
+ // those framebuffers are only filled by an unscaled frame, which is why the
+ // hotkey defers a frame (shot_pending). Straight RGBA, alpha forced opaque.
+-bool write_png(NDS& nds, const std::string& path, const ds::sdl::Display::Layout& layout) {
++bool compose_frame_rgba(NDS& nds, const ds::sdl::Display::Layout& layout,
++                        std::vector<u8>& rgba, int& out_w, int& out_h) {
+   using Disp = ds::sdl::Display;
+   int w = 0, h = 0;
+   Disp::natural_size(layout, 1.0, w, h);
++  if (w <= 0 || h <= 0) return false;
+   Disp::View views[Disp::SCREENS];
+   Disp::place(layout, w, h, views);
+-  std::vector<u8> rgba(static_cast<size_t>(w) * h * 4, 0);
++  rgba.assign(static_cast<size_t>(w) * h * 4, 0);
+   for (int i = 0; i < Disp::SCREENS; ++i) {
+     const Disp::View& v = views[i];
+     if (!v.shown || v.rect.w <= 0 || v.rect.h <= 0) continue;
+@@ -274,6 +277,15 @@ bool write_png(NDS& nds, const std::string& path, const ds::sdl::Display::Layout
+       }
+     }
+   }
++  out_w = w;
++  out_h = h;
++  return true;
++}
++
++bool write_png(NDS& nds, const std::string& path, const ds::sdl::Display::Layout& layout) {
++  int w = 0, h = 0;
++  std::vector<u8> rgba;
++  if (!compose_frame_rgba(nds, layout, rgba, w, h)) return false;
+   size_t len = 0;
+   void* png = tdefl_write_image_to_png_file_in_memory_ex(rgba.data(), w, h, 4, &len, 6 /* zlib default level */, MZ_FALSE);
+   if (!png) { std::fprintf(stderr, "png: cannot encode\n"); return false; }
+@@ -286,42 +298,73 @@ bool write_png(NDS& nds, const std::string& path, const ds::sdl::Display::Layout
+   return true;
+ }
+ 
+-// The screenshot hotkey: <GAMECODE>-<timestamp>.png in the screenshots
+-// directory (paths.screenshots; the states directory unless set). The
+-// directory is made on demand, one level, so a fresh path in the config
+-// works without a prior mkdir.
+-void screenshot(NDS& nds, const std::string& dir, const ds::sdl::Display::Layout& layout) {
++// The screenshot hotkey. The name follows minarch's, which is what every other
++// system on a MinUI card writes and what its screenshot tooling expects:
++// <display name>.<YYYY-MM-DD-HH-MM-SS>.png, flat in the screenshots directory
++// (paths.screenshots; the states directory unless set). The display name is
++// the ROM's filename with its extension and any trailing (...) or [...] groups
++// removed, falling back to the game code when there is no ROM. The directory
++// is made on demand, one level, so a fresh path in the config works without a
++// prior mkdir.
++std::string display_name_of(NDS& nds, const std::string& rom) {
++  std::string n = rom.empty() ? std::string() : base_name(rom_stem(rom));
++  // Trailing bracketed groups, innermost last: "Game (USA) [!]" -> "Game".
++  for (;;) {
++    while (!n.empty() && n.back() == ' ') n.pop_back();
++    if (n.size() < 2) break;
++    const char close = n.back();
++    const char open = close == ')' ? '(' : close == ']' ? '[' : '\0';
++    if (!open) break;
++    const size_t at = n.find_last_of(open);
++    if (at == std::string::npos) break;
++    n.resize(at);
++  }
++  while (!n.empty() && n.back() == ' ') n.pop_back();
++  if (!n.empty()) return n;
++  return std::string(nds.cart ? nds.cart->header().game_code : "NONE", 4);
++}
++
++void screenshot(NDS& nds, const std::string& dir, const ds::sdl::Display::Layout& layout, const std::string& rom) {
+   ::mkdir(dir.c_str(), 0755);
+   char stamp[32];
+   const std::time_t now = std::time(nullptr);
+-  std::strftime(stamp, sizeof stamp, "%Y%m%d-%H%M%S", std::localtime(&now));
+-  std::string code(nds.cart ? nds.cart->header().game_code : "NONE", 4);
+-  const std::string path = dir + "/" + code + "-" + stamp + ".png";
++  std::strftime(stamp, sizeof stamp, "%Y-%m-%d-%H-%M-%S", std::localtime(&now));
++  const std::string path = dir + "/" + display_name_of(nds, rom) + "." + stamp + ".png";
+   if (write_png(nds, path, layout)) std::fprintf(stderr, "screenshot: %s\n", path.c_str());
+ }
+ 
+-std::string state_path(NDS& nds, const std::string& dir, int slot) {
+-  const std::string code(nds.cart ? nds.cart->header().game_code : "NONE", 4);
+-  return dir + "/" + code + "." + std::to_string(slot) + ".dss";
++// What a state file is named after. The game code is upstream's default and
++// stays so; "rom" keys on the ROM's filename instead, which a launcher wants
++// because it is what the launcher itself keys everything on, and because two
++// hacks of one game share a game code and would otherwise share slots.
++// emu.state_key, set once from main() before any state path is built.
++std::string g_state_key = "code";
++
++std::string state_key_of(NDS& nds, const std::string& rom) {
++  if (g_state_key == "rom" && !rom.empty()) return base_name(rom_stem(rom));
++  return std::string(nds.cart ? nds.cart->header().game_code : "NONE", 4);
++}
++
++std::string state_path(NDS& nds, const std::string& dir, int slot, const std::string& rom) {
++  return dir + "/" + state_key_of(nds, rom) + "." + std::to_string(slot) + ".dss";
+ }
+ 
+ // The auto-save slot. Named ".auto" rather than a number so it can never
+ // collide with a slot the player picks, and so refresh_slots() -- which walks
+ // 0..9 -- leaves it out of the menu: it is reached only by --load-state.
+-std::string auto_state_path(NDS& nds, const std::string& dir) {
+-  const std::string code(nds.cart ? nds.cart->header().game_code : "NONE", 4);
+-  return dir + "/" + code + ".auto.dss";
++std::string auto_state_path(NDS& nds, const std::string& dir, const std::string& rom) {
++  return dir + "/" + state_key_of(nds, rom) + ".auto.dss";
+ }
+ 
+ // Autoload: the auto slot as the starting point, when emu.autoload asks for
+ // it and the file is there. The state is left in place -- a SIGKILL never
+ // gets to write one, so the last clean exit's state stays resumable, and a
+ // clean exit overwrites it anyway.
+-std::string autoload_path(NDS& nds, const std::string& dir, bool enabled) {
++std::string autoload_path(NDS& nds, const std::string& dir, bool enabled, const std::string& rom) {
+   // Never for a cart-less firmware boot: auto_state_path() keys on the "NONE"
+   // code there, and would pick up whatever an earlier cart-less session left.
+   if (!enabled || !nds.cart) return {};
+-  const std::string path = auto_state_path(nds, dir);
++  const std::string path = auto_state_path(nds, dir, rom);
+   FILE* f = std::fopen(path.c_str(), "rb");
+   if (!f) return {};
+   std::fclose(f);
+@@ -1449,6 +1492,13 @@ sdl_ready:
+   // cheats -- lives here, so that launching a game from the loader cart can
+   // re-derive the lot rather than keep writing the loader's.
+   Session session;
++  // Set before session.open and before autoload_path below, which is the first
++  // thing to build a state path. "code" keeps upstream's behaviour.
++  g_state_key = cfg.str("emu.state_key", "code");
++  if (g_state_key != "code" && g_state_key != "rom") {
++    std::fprintf(stderr, "emu.state_key: %s is not code or rom; using code\n", g_state_key.c_str());
++    g_state_key = "code";
++  }
+   session.open(nds, cfg, rom_path, save_arg);
+ 
+   nds.sched.set_quantum(quantum);
+@@ -1505,7 +1555,7 @@ sdl_ready:
+   // them: the log is the inputs from boot).
+   const std::string autoload = load_state || log.reading() || log.writing()
+                                    ? std::string()
+-                                   : autoload_path(nds, session.states_dir, cfg.flag("emu.autoload", false));
++                                   : autoload_path(nds, session.states_dir, cfg.flag("emu.autoload", false), session.rom_path);
+   if (load_state || !autoload.empty()) {
+     const char* start_state = load_state ? load_state : autoload.c_str();
+     bool got_layout = false;
+@@ -1524,6 +1574,8 @@ sdl_ready:
+       if (log.reading()) { ds::input::Frame f; for (u64 k = 0; k < nds.frame_count && log.read(f); ++k) {} }
+     }
+   }
++  ds::sdl::MinUi minui;
++  minui.open();
+   ds::sdl::Lid lid;
+   if (!replay) lid.open();
+   std::vector<s16> mic, mic_raw, mic_queue;
+@@ -1659,7 +1711,7 @@ sdl_ready:
+   // from the panel.
+   bool shot_pending = false;
+   auto refresh_slots = [&] { for (int i = 0; i < 10; ++i) {
+-    FILE* f = std::fopen(state_path(nds, session.states_dir, i).c_str(), "rb");
++    FILE* f = std::fopen(state_path(nds, session.states_dir, i, session.rom_path).c_str(), "rb");
+     menu.set_slot_used(i, f != nullptr);
+     if (f) std::fclose(f);
+   }
+@@ -1679,6 +1731,21 @@ sdl_ready:
+   // unscaled frame (the pause stop, a screenshot frame, the renderer tier)
+   // and not after a scanline-tier frame, whose lines went to the panel.
+   bool fb_current = false;
++  // The launcher's picture of a slot, plus the marker naming which slot it is.
++  // minarch writes both on every user save and load, and the switcher will not
++  // offer a resume without the marker. Slots outside 0..MAX_SLOT are the hidden
++  // ones the switcher never lists, so they are skipped.
++  auto minui_slot_saved = [&](int slot) {
++    if (!minui.active()) return;
++    const std::string bmp = minui.slot_thumbnail_path(slot);
++    if (bmp.empty()) return;
++    int w = 0, h = 0;
++    std::vector<u8> rgba;
++    if (compose_frame_rgba(nds, display.current_layout(), rgba, w, h))
++      ds::sdl::write_bmp(rgba.data(), w, h, bmp);
++    minui.write_slot_marker(slot);
++  };
++
+   auto autosave_now = [&] {
+     if (!autosave || save_readonly || log.writing()) return;
+     // The thumbnail is the game's picture without the panel effects, like a
+@@ -1691,12 +1758,12 @@ sdl_ready:
+       nds.run_frame();
+       fb_current = true;
+     }
+-    if (!save_state_file(nds, auto_state_path(nds, session.states_dir), display.current_layout())) return;
++    if (!save_state_file(nds, auto_state_path(nds, session.states_dir, session.rom_path), display.current_layout())) return;
+     flush_save();   // the .sav and the state never diverge
+     if (!autosave_png) return;
+     const bool beside = autosave_png_cfg == "true" || autosave_png_cfg == "1";
+     std::string png = autosave_png_cfg;
+-    if (beside) { png = auto_state_path(nds, session.states_dir); png.replace(png.size() - 3, 3, "png"); }
++    if (beside) { png = auto_state_path(nds, session.states_dir, session.rom_path); png.replace(png.size() - 3, 3, "png"); }
+     if (write_png(nds, png, display.current_layout())) std::fprintf(stderr, "state: thumbnail %s\n", png.c_str());
+   };
+   // A loaded state's view, applied the way the layout hotkeys apply theirs.
+@@ -2507,6 +2574,27 @@ sdl_ready:
+   while (!input.quit() && !g_signalled && (frame_limit == 0 || frames < static_cast<u64>(frame_limit))) {
+     SDL_Event e;
+     while (SDL_PollEvent(&e)) input.handle(e, display, dual_window ? &display2 : nullptr);
++    // The power button, before anything else and before the paused branch's
++    // `continue` below, so it answers whether or not the pause menu is up.
++    switch (minui.poll()) {
++      case ds::sdl::MinUi::Event::Sleep:
++        // The state and the marker are insurance against the battery dying
++        // while suspended; a normal wake clears the marker again.
++        autosave_now();
++        minui.write_auto_resume();
++        minui.sleep([&] { set_paused(true); }, [&] { set_paused(false); });
++        minui.clear_auto_resume();
++        break;
++      case ds::sdl::MinUi::Event::PowerOff:
++        // The launcher shell shuts the device down when it sees this; asking
++        // Input to quit runs the ordinary exit path, so the battery save and
++        // the auto state are written first.
++        if (std::system("touch /tmp/poweroff") != 0) { /* best effort */ }
++        input.request_quit();
++        break;
++      case ds::sdl::MinUi::Event::None:
++        break;
++    }
+     for (ds::sdl::Action a : input.take_actions()) {
+       using A = ds::sdl::Action;
+       switch (a) {
+@@ -2558,14 +2646,27 @@ sdl_ready:
+         if (!session.game_ini.empty()) ds::sdl::Config::store(session.game_ini, "video.pip_corner", Disp::corner_name(l.corner));
+         break;
+       }
+-      case A::Screenshot: if (paused) screenshot(nds, session.shots_dir, display.current_layout()); else shot_pending = true; break;
++      case A::GameSwitcher:
++        // Leave for the launcher's switcher: save where a resume will look,
++        // leave it a picture, and mark that the switcher should open.
++        if (save_readonly) { std::fprintf(stderr, "state: not during a replay\n"); break; }
++        if (log.writing()) { std::fprintf(stderr, "state: not while recording\n"); break; }
++        if (save_state_file(nds, state_path(nds, session.states_dir, state_slot, session.rom_path), display.current_layout())) {
++          flush_save();
++          minui_slot_saved(state_slot);
++        }
++        minui.write_game_switcher();
++        input.request_quit();
++        break;
++      case A::Screenshot: if (paused) screenshot(nds, session.shots_dir, display.current_layout(), session.rom_path); else shot_pending = true; break;
+       case A::Lid: input.set_lid(!input.lid()); VLOG("lid: %s\n", input.lid() ? "closed" : "open"); if (input.lid()) flush_save(); break;
+       case A::SlotNext: state_slot = (state_slot + 1) % 10; show_slot(std::to_string(state_slot)); VLOG("state slot %d\n", state_slot); break;
+       case A::SlotPrev: state_slot = (state_slot + 9) % 10; show_slot(std::to_string(state_slot)); VLOG("state slot %d\n", state_slot); break;
+       case A::SaveState:
+         if (save_readonly) { std::fprintf(stderr, "state: not during a replay\n"); break; }
+-        if (save_state_file(nds, state_path(nds, session.states_dir, state_slot), display.current_layout())) {
++        if (save_state_file(nds, state_path(nds, session.states_dir, state_slot, session.rom_path), display.current_layout())) {
+           flush_save();   // the .sav and the state never diverge
++          minui_slot_saved(state_slot);
+           show_slot("STATE " + std::to_string(state_slot) + " SAVED");
+         }
+         break;
+@@ -2573,12 +2674,13 @@ sdl_ready:
+         if (save_readonly) { std::fprintf(stderr, "state: not during a replay\n"); break; }
+         // A recording is the inputs from boot; a load would leave it unreplayable.
+         if (log.writing()) { std::fprintf(stderr, "state: not while recording\n"); break; }
+-        if (load_state_file(nds, state_path(nds, session.states_dir, state_slot), loaded_layout, got_layout)) {
++        if (load_state_file(nds, state_path(nds, session.states_dir, state_slot, session.rom_path), loaded_layout, got_layout)) {
+           apply_loaded_layout();
+           audio.clear();
+           next_frame = SDL_GetPerformanceCounter();
+           fs_debt_ms = 0;
+           flush_save();
++          minui.write_slot_marker(state_slot);
+           show_slot("STATE " + std::to_string(state_slot) + " LOADED");
+         }
+         break;
+@@ -2620,9 +2722,10 @@ sdl_ready:
+         // which a load would leave unreplayable.
+         case Menu::Result::Save:
+           if (save_readonly) std::fprintf(stderr, "state: not during a replay\n");
+-          else if (save_state_file(nds, state_path(nds, session.states_dir, menu.slot()), display.current_layout())) {
++          else if (save_state_file(nds, state_path(nds, session.states_dir, menu.slot(), session.rom_path), display.current_layout())) {
+             g_state_refused.clear();   // the slot now holds a state this build made
+             flush_save();
++            minui_slot_saved(menu.slot());
+           }
+           refresh_slots();
+           break;
+@@ -2631,7 +2734,7 @@ sdl_ready:
+           if (log.writing()) { std::fprintf(stderr, "state: not while recording\n"); break; }
+           // A load replaces the picture the menu is drawn over, so it also
+           // leaves the menu: the player wants to see where they landed.
+-          if (load_state_file(nds, state_path(nds, session.states_dir, menu.slot()), loaded_layout, got_layout)) {
++          if (load_state_file(nds, state_path(nds, session.states_dir, menu.slot(), session.rom_path), loaded_layout, got_layout)) {
+             apply_loaded_layout();
+             state_slot = menu.slot();
+             menu.set_open(false);
+@@ -2677,7 +2780,7 @@ sdl_ready:
+           // wins, and never during a replay or a recording.
+           if (const std::string a = log.reading() || log.writing()
+                                         ? std::string()
+-                                        : autoload_path(nds, session.states_dir, cfg.flag("emu.autoload", false));
++                                        : autoload_path(nds, session.states_dir, cfg.flag("emu.autoload", false), session.rom_path);
+               !a.empty() && load_state_file(nds, a, loaded_layout, got_layout)) {
+             std::fprintf(stderr, "state: autoloaded %s\n", a.c_str());
+             apply_loaded_layout();
+@@ -3109,7 +3212,7 @@ sdl_ready:
+     // An unscaled frame is in fb_: the picture the screenshot wants.
+     if (shot_pending && present) {
+       shot_pending = false;
+-      screenshot(nds, session.shots_dir, display.current_layout());
++      screenshot(nds, session.shots_dir, display.current_layout(), session.rom_path);
+       flash_left = FLASH_FRAMES;   // from the next frame: this one is already on the panel and in the file
+     }
+     // The frame the menu will sit on is presented and, because it went down
+@@ -3285,6 +3388,7 @@ sdl_ready:
+   }
+   log.close();
+   ds::prof::report();
++  minui.close();
+   lid.close();
+   mic_alsa.close();
+   input.close();
+diff --git a/tests/CMakeLists.txt b/tests/CMakeLists.txt
+index 7d85482..85fbcca 100644
+--- a/tests/CMakeLists.txt
++++ b/tests/CMakeLists.txt
+@@ -108,3 +108,10 @@ if(DSPERATE_CHEEVOS)
+   target_link_libraries(test_cheevos_client PRIVATE dsperate_cheevos)
+   add_test(NAME cheevos_client COMMAND test_cheevos_client)
+ endif()
++
++# The vendored MinUI module's bitmap writer. minui_bmp.cpp is its own
++# translation unit precisely so this links without SDL, and so runs in a build
++# container where libSDL2 cannot be loaded.
++add_executable(test_bmp bmp_test.cpp ../src/frontend/sdl/minui_bmp.cpp)
++target_include_directories(test_bmp PRIVATE ../src)
++add_test(NAME bmp COMMAND test_bmp)

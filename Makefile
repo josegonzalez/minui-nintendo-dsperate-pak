@@ -29,8 +29,6 @@ TG5040_CPUFLAGS := -mcpu=cortex-a53 -mtune=cortex-a53
 TG5050_CPUFLAGS := -mcpu=cortex-a55 -mtune=cortex-a55
 H700_CPUFLAGS   := -mcpu=cortex-a53 -mtune=cortex-a53
 
-MINUI_POWER_CONTROL_VERSION := 1.1.0
-
 # ── ABI ceiling, per platform ─────────────────────────────────────────────────
 # Enforced by scripts/check-abi.sh against the stripped binary.
 #
@@ -66,6 +64,7 @@ BUILD   := $(ROOT)/build
 DIST    := $(ROOT)/dist/$(PAK_NAME).pak
 CONFIG  := $(ROOT)/config
 PATCHES := $(ROOT)/patches
+OVERLAY := $(ROOT)/overlay
 CROSS   := aarch64-nextui-linux-gnu-
 
 DOCKER_SCRIPT := /build/scripts/docker-env.sh
@@ -114,6 +113,11 @@ clone: $(SRC)/DSperate
 # Only vendored third-party code (miniz, rcheevos) -- no submodules.
 $(SRC)/DSperate:
 	git clone --depth 1 --branch $(DSPERATE_TAG) $(DSPERATE_REPO) $@
+	@# The MinUI module is vendored here rather than patched in, so patch 0003
+	@# only ever modifies files upstream already has. Runtime sources go beside
+	@# the frontend, the unit test beside the other tests.
+	cp $(OVERLAY)/minui.h $(OVERLAY)/minui.cpp $(OVERLAY)/minui_bmp.cpp $@/src/frontend/sdl/
+	cp $(OVERLAY)/bmp_test.cpp $@/tests/
 	@# A patch that no longer applies is fatal: a drifted patch must not produce
 	@# a green build with the workaround silently missing.
 	cd $@ && for p in $(PATCHES)/*.patch; do \
@@ -229,7 +233,7 @@ dist-h700:   stage-h700   dist-common ; $(call DSP_DIST,h700)
 # Platform-independent payload, staged once at the pak root rather than copied
 # per platform: unlike mupen64plus, DSperate takes every data path from its ini,
 # so nothing has to sit beside the binary.
-dist-common: clone $(DIST)/minui-power-control
+dist-common: clone
 	mkdir -p $(DIST)/configs
 	cp $(CONFIG)/dsperate/no-sticks.ini $(DIST)/configs/
 	cp $(CONFIG)/dsperate/one-stick.ini $(DIST)/configs/
@@ -250,11 +254,6 @@ dist-common: clone $(DIST)/minui-power-control
 		"$$(cd $(SRC)/DSperate && git rev-parse HEAD)" \
 		"$$(cd $(PATCHES) && ls *.patch | tr '\n' ' ')" \
 		"$(DSP_CMAKE_COMMON)" > $(DIST)/dsperate.build-info
-
-$(DIST)/minui-power-control:
-	mkdir -p $(DIST)
-	curl -f -o $@ -sSL https://github.com/ben16w/minui-power-control/releases/download/$(MINUI_POWER_CONTROL_VERSION)/minui-power-control
-	chmod +x $@
 
 dist:
 	$(MAKE) dist-tg5040
