@@ -182,3 +182,10 @@ load test_helper
     [[ "$output" == *"RELEASE_VERSION is not set"* ]]
     [ "$(jq -r .version "$REPO_ROOT/pak.json")" != "" ]
 }
+
+@test "release only bumps the version when one was given" {
+    # ci.yaml runs `make release` to produce a reviewable artifact and sets no
+    # RELEASE_VERSION. An unconditional bump-version there fails the build.
+    grep -q 'if \[ -n "$(RELEASE_VERSION)" \]; then' "$REPO_ROOT/Makefile"
+    ! grep -qE '^\t\$\(MAKE\) bump-version$' "$REPO_ROOT/Makefile"
+}

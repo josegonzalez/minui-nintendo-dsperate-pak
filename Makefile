@@ -266,14 +266,22 @@ dist:
 
 # ── Release ───────────────────────────────────────────────────────────────────
 
+# The version bump belongs to a release, not to building an artifact: ci.yaml
+# runs this target to produce a zip for review and sets no RELEASE_VERSION, so
+# the bump is skipped there and pak.json keeps whatever version it has.
 release: dist
-	$(MAKE) bump-version
+	@if [ -n "$(RELEASE_VERSION)" ]; then \
+		$(MAKE) bump-version; \
+	else \
+		echo "RELEASE_VERSION unset: keeping pak.json at $$(jq -r .version pak.json)"; \
+	fi
 	cp pak.json $(DIST)/
 	cd $(DIST) && zip -r "../$(PAK_NAME).pak.zip" .
 	ls -lah dist
 
-# Guarded because `make release` calls this, and an unset RELEASE_VERSION would
-# quietly rewrite pak.json's version to the empty string. CI always sets it.
+# Guarded because an unset RELEASE_VERSION would otherwise quietly rewrite
+# pak.json's version to the empty string. Only release.yaml sets it, and only
+# release.yaml should be calling this.
 bump-version:
 	@test -n "$(RELEASE_VERSION)" \
 		|| { echo "error: RELEASE_VERSION is not set"; exit 1; }
