@@ -60,6 +60,41 @@ profile_for() {
 @test "an unknown h700 device falls back to the stickless profile" {
     profile_for h700 ""
     [ "$PROFILE_INI" = "no-sticks" ]
+    [ "$PROFILE_MAP_FIXED" = "$DSP_MAP_TRIMUI_NOSTICK" ]
+}
+
+@test "the fixed-layout GUID is the one NextUI h700-rc11 reports" {
+    [ "$DSP_H700_FIXED_GUID" = "19000000010000000100000000016e01" ]
+}
+
+@test "h700 models with a stick take the TrimUI mapping on the fixed layout" {
+    for d in rg35xxh rg35xxpro rg40xxh rgcubexx rg34xxsp rg40xxv; do
+        profile_for h700 "$d"
+        [ "$PROFILE_MAP_FIXED" = "$DSP_MAP_TRIMUI" ] || {
+            echo "$d gave $PROFILE_MAP_FIXED"
+            return 1
+        }
+    done
+}
+
+@test "stickless h700 models take the stickless TrimUI mapping on the fixed layout" {
+    for d in rg28xx rg34xx rg35xxplus rg35xxsp rgsp; do
+        profile_for h700 "$d"
+        [ "$PROFILE_MAP_FIXED" = "$DSP_MAP_TRIMUI_NOSTICK" ] || {
+            echo "$d gave $PROFILE_MAP_FIXED"
+            return 1
+        }
+    done
+}
+
+@test "only h700 has a fixed-layout mapping" {
+    for p in tg5040:brick tg5040:smartpro tg5050: miyoomini:; do
+        profile_for "${p%%:*}" "${p##*:}"
+        [ -z "$PROFILE_MAP_FIXED" ] || {
+            echo "$p unexpectedly has $PROFILE_MAP_FIXED"
+            return 1
+        }
+    done
 }
 
 @test "every profile the table can return exists in the pak" {

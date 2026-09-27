@@ -17,6 +17,8 @@ This pak is designed and tested on the following MinUI Platforms and devices:
 
 Use the correct platform for your device. The `h700` and `tg5050` platforms are provided by NextUI, so those devices need NextUI rather than stock MinUI.
 
+On `h700`, NextUI rc11 changed the button numbers SDL apps see. The pak detects which numbering the running NextUI uses, so both rc11 and later and earlier releases get the right buttons.
+
 ## Installation
 
 1. Mount your MinUI SD card.
@@ -99,9 +101,10 @@ Hold the power button for a second to shut down. Unlike a plain kill, this write
 
 Debug logs are written to the `/.userdata/$PLATFORM/logs/` folder, as `DSP.txt`.
 
-Three lines in that log are worth knowing:
+These lines in that log are worth knowing:
 
 - `controller: <name>` confirms the pad mapping was accepted. DSperate has no joystick fallback, so if this line is missing there will be no input at all.
+- `NextUI fixed h700 pad layout, using the TrimUI button numbers` appears on `h700` with NextUI rc11 or later. Without it, the pre-rc11 per-model button numbers are in use.
 - `video: ...` names the display path that opened. Expect `fbdev scanout` on `h700`. Anything mentioning the SDL renderer means it fell back and will be slow.
 - The recompiler banner. An interpreter note instead means the JIT is off, and the emulator will be far too slow.
 

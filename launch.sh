@@ -100,7 +100,17 @@ dsp_export_pad_mapping() {
     [ -n "$_guid" ] || return 0
     [ -n "$_name" ] || _name="Controller"
 
-    export SDL_GAMECONTROLLERCONFIG="$_guid,$_name,$PROFILE_MAP,platform:Linux"
+    # NextUI h700-rc11 and later give every H700 model the TrimUI numbers and
+    # say so through the GUID. Its SDL also carries a built-in mapping for that
+    # GUID, but this one takes priority and matches the TrimUI pads, so it is
+    # still exported rather than left to SDL.
+    _map="$PROFILE_MAP"
+    if [ -n "${PROFILE_MAP_FIXED:-}" ] && [ "$_guid" = "$DSP_H700_FIXED_GUID" ]; then
+        _map="$PROFILE_MAP_FIXED"
+        echo "NextUI fixed h700 pad layout, using the TrimUI button numbers"
+    fi
+
+    export SDL_GAMECONTROLLERCONFIG="$_guid,$_name,$_map,platform:Linux"
     echo "pad mapping: $_guid ($_name)"
 }
 

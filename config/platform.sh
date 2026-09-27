@@ -11,6 +11,10 @@
 # (304-316), so its gamepad buttons start at index 3. Stick-click codes 313 (L3)
 # and 316 (R3) exist only where a stick does, which shifts L2/R2 again -- hence
 # three h700 classes.
+#
+# That per-model numbering is pre-rc11 only. From NextUI h700-rc11, its SDL
+# presents every H700 model with the TrimUI numbers and a new GUID, so on that
+# GUID the TrimUI bodies apply instead (PROFILE_MAP_FIXED, chosen in launch.sh).
 
 # The mapping bodies below are SDL GameController mappings in SDL's POSITIONAL
 # convention: "a" is the South button, "b" East, "x" West, "y" North.
@@ -40,6 +44,14 @@ DSP_MAP_H700_LSTICK='a:b3,b:b4,x:b5,y:b6,back:b9,guide:b11,start:b10,leftshoulde
 # h700 with no sticks: no stick clicks, so L2/R2 sit at 12/13.
 DSP_MAP_H700_NOSTICK='a:b3,b:b4,x:b5,y:b6,back:b9,guide:b11,start:b10,leftshoulder:b7,rightshoulder:b8,lefttrigger:b12,righttrigger:b13,dpup:h0.1,dpdown:h0.4,dpleft:h0.8,dpright:h0.2'
 
+# NextUI's h700 SDL reports the built-in pad with this GUID only while its
+# fixed (TrimUI-numbered) layout is active: rc11 and later, unless
+# SDL_JOYSTICK_H700_FIXED_LAYOUT=0. Older builds, that override and any other
+# SDL report a different GUID and keep the per-model numbering above. This is
+# the check NextUI's "Porting NextUI Paks to H700" wiki page recommends.
+# shellcheck disable=SC2034 # read by launch.sh
+DSP_H700_FIXED_GUID='19000000010000000100000000016e01'
+
 # The PROFILE_* variables are read by launch.sh, which sources this file, so
 # their use is not visible from here.
 # shellcheck disable=SC2034
@@ -47,13 +59,16 @@ DSP_MAP_H700_NOSTICK='a:b3,b:b4,x:b5,y:b6,back:b9,guide:b11,start:b10,leftshould
 #
 # Sets:
 #   PROFILE_INI      which configs/<name>.ini to seed from
-#   PROFILE_MAP      the SDL GameController mapping body
-#   PROFILE_ROTATE   DS_ROTATE value, empty for none
-#   PROFILE_LD_DIRS  extra LD_LIBRARY_PATH entries, space separated
+#   PROFILE_MAP        the SDL GameController mapping body
+#   PROFILE_MAP_FIXED  the body to use instead when the pad reports
+#                      DSP_H700_FIXED_GUID, empty where that cannot happen
+#   PROFILE_ROTATE     DS_ROTATE value, empty for none
+#   PROFILE_LD_DIRS    extra LD_LIBRARY_PATH entries, space separated
 dsp_platform_profile() {
     _platform="$1"
     _device="$2"
 
+    PROFILE_MAP_FIXED=""
     PROFILE_ROTATE=""
     PROFILE_LD_DIRS=""
 
@@ -83,15 +98,20 @@ dsp_platform_profile() {
         rg35xxh | rg35xxpro | rg40xxh | rgcubexx | rg34xxsp)
             PROFILE_INI="two-sticks"
             PROFILE_MAP="$DSP_MAP_H700_STICKS"
+            PROFILE_MAP_FIXED="$DSP_MAP_TRIMUI"
             ;;
         rg40xxv)
             PROFILE_INI="one-stick"
             PROFILE_MAP="$DSP_MAP_H700_LSTICK"
+            # The fixed layout reports every axis on every model; the right
+            # stick's simply stay centred here.
+            PROFILE_MAP_FIXED="$DSP_MAP_TRIMUI"
             ;;
         *)
             # rg28xx, rg34xx, rg35xxplus, rg35xxsp, rgsp.
             PROFILE_INI="no-sticks"
             PROFILE_MAP="$DSP_MAP_H700_NOSTICK"
+            PROFILE_MAP_FIXED="$DSP_MAP_TRIMUI_NOSTICK"
             ;;
         esac
         # The rg28xx panel is mounted portrait. NextUI exports SDL_ROTATION=1 so
