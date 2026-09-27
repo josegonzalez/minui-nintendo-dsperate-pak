@@ -169,6 +169,16 @@ which dispatches on the magic bytes rather than the extension. MinUI's SDL_image
 — it loads its own UI atlas that way at `common/api.c:150` — so there is no reason for the pak to
 carry an image encoder of its own.
 
+## h700 pad numbering
+
+NextUI h700-rc11 changed how its SDL presents the built-in Anbernic pad. Before rc11 the button numbers depended on the model, which is why `config/platform.sh` carries three per-model `DSP_MAP_H700_*` bodies. From rc11, every H700 model reports the TrimUI (tg5040) numbers, L2/R2 become axes 2 and 5, and the pad's GUID changes to `19000000010000000100000000016e01`.
+
+`dsp_export_pad_mapping` picks the body by that GUID: on it, h700 uses `PROFILE_MAP_FIXED`, which is `DSP_MAP_TRIMUI` or `DSP_MAP_TRIMUI_NOSTICK`; on anything else it keeps the per-model body. This is the check NextUI's [Porting NextUI Paks to H700](https://github.com/pvaibhav/NextUI/wiki/Porting-NextUI-Paks-to-H700#built-in-controls-in-sdl) page recommends, and it follows the real state rather than a version number: `SDL_JOYSTICK_H700_FIXED_LAYOUT=0` brings back both the old numbers and the old GUID. `PROFILE_MAP_FIXED` is empty on every other platform, so a TrimUI pad can never take this path.
+
+rc11's SDL also ships a built-in mapping for the new GUID, but the pak still exports its own. An exported mapping takes priority, and the built-in one does not match the TrimUI bodies the pak uses everywhere else.
+
+The per-model bodies only matter for pre-rc11 builds and can go once those are no longer worth supporting.
+
 ## Known rough edges
 
 - **rg28xx rotation is unverified.** Its panel is mounted portrait and NextUI exports `SDL_ROTATION=1` so applications see 640x480 landscape, but DSperate's fbdev tier writes `/dev/fb0` directly and never goes through SDL, so that rotation does not reach it. `config/platform.sh` sets `DS_ROTATE=270` for that device on that reasoning; it needs confirming on hardware.

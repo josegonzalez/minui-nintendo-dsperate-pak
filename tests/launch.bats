@@ -101,6 +101,44 @@ setup() {
     [ "${SDL_GAMECONTROLLERCONFIG#*guide:b}" != "$SDL_GAMECONTROLLERCONFIG" ]
 }
 
+# Re-root the fake card on an h700 device whose pad reports <guid>.
+setup_h700_pad() {
+    setup_launch h700 "$1"
+    unset LD_LIBRARY_PATH SDL_GAMECONTROLLERCONFIG
+    dsp_platform_profile h700 "$1"
+    dsp_init_env
+    stub_pad_guid "$2" "ANBERNIC-keys"
+}
+
+@test "NextUI's fixed h700 layout takes the TrimUI mapping" {
+    setup_h700_pad rg40xxh "$DSP_H700_FIXED_GUID"
+    dsp_export_pad_mapping
+    [ "$SDL_GAMECONTROLLERCONFIG" = "$DSP_H700_FIXED_GUID,ANBERNIC-keys,$DSP_MAP_TRIMUI,platform:Linux" ]
+}
+
+@test "NextUI's fixed h700 layout on a stickless model takes the stickless TrimUI mapping" {
+    setup_h700_pad rg35xxplus "$DSP_H700_FIXED_GUID"
+    dsp_export_pad_mapping
+    [ "$SDL_GAMECONTROLLERCONFIG" = "$DSP_H700_FIXED_GUID,ANBERNIC-keys,$DSP_MAP_TRIMUI_NOSTICK,platform:Linux" ]
+}
+
+@test "an h700 pad on the old layout keeps the per-model mapping" {
+    # Pre-rc11 NextUI, or SDL_JOYSTICK_H700_FIXED_LAYOUT=0.
+    setup_h700_pad rg40xxh 19000000010000000100000000010000
+    dsp_export_pad_mapping
+    [ "$SDL_GAMECONTROLLERCONFIG" = "19000000010000000100000000010000,ANBERNIC-keys,$DSP_MAP_H700_STICKS,platform:Linux" ]
+
+    setup_h700_pad rg35xxplus 19000000010000000100000000010000
+    dsp_export_pad_mapping
+    [ "$SDL_GAMECONTROLLERCONFIG" = "19000000010000000100000000010000,ANBERNIC-keys,$DSP_MAP_H700_NOSTICK,platform:Linux" ]
+}
+
+@test "the fixed-layout GUID changes nothing off h700" {
+    stub_pad_guid "$DSP_H700_FIXED_GUID" "Fake Pad"
+    dsp_export_pad_mapping
+    [ "$SDL_GAMECONTROLLERCONFIG" = "$DSP_H700_FIXED_GUID,Fake Pad,$DSP_MAP_TRIMUI_NOSTICK,platform:Linux" ]
+}
+
 @test "no pad means no mapping rather than a broken one" {
     printf '#!/bin/sh\nexit 1\n' >"$PAK_DIR/$PLATFORM/dsp-pad-guid"
     chmod +x "$PAK_DIR/$PLATFORM/dsp-pad-guid"
