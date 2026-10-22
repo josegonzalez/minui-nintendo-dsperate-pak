@@ -218,7 +218,8 @@ setup_h700_pad() {
     echo -n "8" >/tmp/resume_slot.txt
     ROM_PATH="$SDCARD_PATH/Roms/Nintendo DS (DSP)/Game.nds"
     dsp_resume_args
-    [ "$DSP_RESUME_ARGS" = "--no-autoload" ]
+    [ "$DSP_RESUME_FLAG" = "--no-autoload" ]
+    [ -z "$DSP_LOAD_STATE" ]
     [ ! -f /tmp/resume_slot.txt ]
 }
 
@@ -226,7 +227,8 @@ setup_h700_pad() {
     echo -n "9" >/tmp/resume_slot.txt
     ROM_PATH="$SDCARD_PATH/Roms/Nintendo DS (DSP)/Game.nds"
     dsp_resume_args
-    [ -z "$DSP_RESUME_ARGS" ]
+    [ -z "$DSP_RESUME_FLAG" ]
+    [ -z "$DSP_LOAD_STATE" ]
     [ ! -f /tmp/resume_slot.txt ]
 }
 
@@ -237,8 +239,11 @@ setup_h700_pad() {
     echo -n "3" >/tmp/resume_slot.txt
     ROM_PATH="$SDCARD_PATH/Roms/Nintendo DS (DSP)/Some Game.nds"
     dsp_init_env
+    mkdir -p "$DSP_STATES_DIR"
+    : >"$DSP_STATES_DIR/Some Game.3.dss"
     dsp_resume_args
-    [ "$DSP_RESUME_ARGS" = "--load-state $DSP_STATES_DIR/Some Game.3.dss" ]
+    [ "$DSP_LOAD_STATE" = "$DSP_STATES_DIR/Some Game.3.dss" ]
+    [ -z "$DSP_RESUME_FLAG" ]
     [ ! -f /tmp/resume_slot.txt ]
 }
 
@@ -246,5 +251,68 @@ setup_h700_pad() {
     rm -f /tmp/resume_slot.txt
     ROM_PATH="$SDCARD_PATH/Roms/Nintendo DS (DSP)/Game.nds"
     dsp_resume_args
-    [ -z "$DSP_RESUME_ARGS" ]
+    [ -z "$DSP_RESUME_FLAG" ]
+    [ -z "$DSP_LOAD_STATE" ]
+}
+
+# Stand in for the emulator in $BIN_DIR: it records its argv, one per line, so
+# a test sees exactly how the arguments were split.
+stub_dsperate() {
+    mkdir -p "$BIN_DIR"
+    printf '#!/bin/sh\nprintf "%%s\\n" "$@" >"%s/argv.txt"\n' "$BATS_TEST_TMPDIR" >"$BIN_DIR/dsperate"
+    chmod +x "$BIN_DIR/dsperate"
+}
+
+# Resume <rom name> from <slot> and run the stub the way main() does.
+run_resume() {
+    ROM_PATH="$SDCARD_PATH/Roms/Nintendo DS (DSP)/$1"
+    dsp_init_env
+    mkdir -p "$DSP_STATES_DIR"
+    stub_dsperate
+    if [ -n "$2" ]; then
+        echo -n "$2" >/tmp/resume_slot.txt
+    else
+        rm -f /tmp/resume_slot.txt
+    fi
+    dsp_resume_args
+    cd "$BIN_DIR"
+    dsp_run_emulator
+}
+
+@test "a resume passes the state path to DSperate as one argument" {
+    # The regression behind issue 4: an unquoted path split on the spaces in
+    # the ROM name, DSperate took the last word as the ROM and quit.
+    _rom="Some Game (USA) [!].nds"
+    dsp_init_env
+    mkdir -p "$DSP_STATES_DIR"
+    : >"$DSP_STATES_DIR/Some Game (USA) [!].3.dss"
+    run_resume "$_rom" 3
+    printf '%s\n' "$ROM_PATH" --fullscreen --load-state "$DSP_STATES_DIR/Some Game (USA) [!].3.dss" >"$BATS_TEST_TMPDIR/want.txt"
+    diff "$BATS_TEST_TMPDIR/want.txt" "$BATS_TEST_TMPDIR/argv.txt"
+}
+
+@test "a resume whose state is gone falls back to autoload" {
+    # An explicit --load-state that cannot be read fails the whole run, so a
+    # stale marker must not turn into one.
+    run run_resume "Some Game (USA).nds" 2
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"resume state "*"Some Game (USA).2.dss not found, falling back to autoload"* ]]
+    [ ! -f /tmp/resume_slot.txt ]
+    printf '%s\n' "$SDCARD_PATH/Roms/Nintendo DS (DSP)/Some Game (USA).nds" --fullscreen >"$BATS_TEST_TMPDIR/want.txt"
+    diff "$BATS_TEST_TMPDIR/want.txt" "$BATS_TEST_TMPDIR/argv.txt"
+}
+
+@test "a plain launch passes --no-autoload as its own argument" {
+    run_resume "Some Game (USA).nds" 8
+    printf '%s\n' "$ROM_PATH" --fullscreen --no-autoload >"$BATS_TEST_TMPDIR/want.txt"
+    diff "$BATS_TEST_TMPDIR/want.txt" "$BATS_TEST_TMPDIR/argv.txt"
+}
+
+@test "the sleep slot and no marker pass only the ROM" {
+    run_resume "Some Game (USA).nds" 9
+    printf '%s\n' "$ROM_PATH" --fullscreen >"$BATS_TEST_TMPDIR/want.txt"
+    diff "$BATS_TEST_TMPDIR/want.txt" "$BATS_TEST_TMPDIR/argv.txt"
+
+    run_resume "Some Game (USA).nds" ""
+    diff "$BATS_TEST_TMPDIR/want.txt" "$BATS_TEST_TMPDIR/argv.txt"
 }

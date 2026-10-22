@@ -107,6 +107,7 @@ These lines in that log are worth knowing:
 - `NextUI fixed h700 pad layout, using the TrimUI button numbers` appears on `h700` with NextUI rc11 or later. Without it, the pre-rc11 per-model button numbers are in use.
 - `video: ...` names the display path that opened. Expect `fbdev scanout` on `h700`. Anything mentioning the SDL renderer means it fell back and will be slow.
 - The recompiler banner. An interpreter note instead means the JIT is off, and the emulator will be far too slow.
+- `resume state <path> not found, falling back to autoload` means RESUME in the game switcher asked for a save state slot that no longer exists, so the game started from its last autosave instead.
 
 ## Development
 

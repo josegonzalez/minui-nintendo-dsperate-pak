@@ -145,7 +145,7 @@ from the last parenthesised group of the Roms folder.
 | Resume request | `/tmp/resume_slot.txt` | read and consumed by launch.sh |
 | Screenshot | `/Screenshots/<display name>.<YYYY-MM-DD-HH-MM-SS>.png` | PNG |
 
-Three things here are silent when wrong, so they have tests:
+Four things here are silent when wrong, so they have tests:
 
 - **No trailing newline** on `auto_resume.txt` or the slot marker. The frontend concatenates
   without trimming, so one `\n` makes the resume quietly never happen. The module uses `fputs`;
@@ -156,6 +156,12 @@ Three things here are silent when wrong, so they have tests:
 - **`autoload` alone is not enough.** minarch writes `8` to `/tmp/resume_slot.txt` for a plain
   launch, meaning "start fresh"; with the shipped `autoload = true` the pak would resume anyway,
   so launch.sh translates the marker into `--load-state` or `--no-autoload`.
+- **The state path is one argument.** ROM names nearly always hold spaces, and DSperate takes
+  every stray positional word as the ROM, so a split `--load-state` path boots nothing and exits.
+  launch.sh builds the argument list with `set --` rather than expanding a word list, and
+  `tests/launch.bats` checks the argv DSperate actually receives. A slot whose `.dss` is missing
+  is dropped in favour of autoload, because an explicit `--load-state` that cannot be read fails
+  the run.
 
 Slots follow minarch: 0-7 are the player's and are the only ones the switcher lists, 8 is its
 hidden default, and 9 is the sleep autosave, which maps onto DSperate's own `.auto` slot. Matching
