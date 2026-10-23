@@ -23,6 +23,8 @@ touch freed SDL objects.
 
 Not a toolchain workaround; drop once upstream fixes it.
 
+Upstream: https://github.com/beebono/DSperate/issues/21
+
 diff --git a/src/frontend/sdl/display_disp.h b/src/frontend/sdl/display_disp.h
 index 31156ff..13adcec 100644
 --- a/src/frontend/sdl/display_disp.h
