@@ -73,6 +73,12 @@ PATCHES := $(ROOT)/patches
 OVERLAY := $(ROOT)/overlay
 CROSS   := aarch64-nextui-linux-gnu-
 
+# The vendored MinUI sources the clone rule copies into src/frontend/sdl/, and
+# the ctest suite it copies into tests/. stb_*.h are nothings/stb, unmodified.
+MINUI_OVERLAY := minui.h minui.cpp minui_gfx.h minui_gfx.cpp minui_menu.h minui_menu.cpp \
+	minui_stb.cpp stb_image.h stb_truetype.h
+MINUI_OVERLAY_TESTS := minui_menu_test.cpp
+
 DOCKER_SCRIPT := /build/scripts/docker-env.sh
 DOCKER_RUN_tg5040 := docker run --rm -v $(ROOT):/build $(TG5040_IMAGE) $(DOCKER_SCRIPT)
 DOCKER_RUN_tg5050 := docker run --rm -v $(ROOT):/build $(TG5050_IMAGE) $(DOCKER_SCRIPT)
@@ -135,7 +141,8 @@ $(SRC)/DSperate:
 	git clone --depth 1 --branch $(DSPERATE_TAG) $(DSPERATE_REPO) $@
 	@# The MinUI module is vendored here rather than patched in, so patch 0003
 	@# only ever modifies files upstream already has.
-	cp $(OVERLAY)/minui.h $(OVERLAY)/minui.cpp $@/src/frontend/sdl/
+	cp $(addprefix $(OVERLAY)/,$(MINUI_OVERLAY)) $@/src/frontend/sdl/
+	cp $(addprefix $(OVERLAY)/tests/,$(MINUI_OVERLAY_TESTS)) $@/tests/
 	@# A patch that no longer applies is fatal: a drifted patch must not produce
 	@# a green build with the workaround silently missing.
 	cd $@ && for p in $(PATCHES)/*.patch; do \

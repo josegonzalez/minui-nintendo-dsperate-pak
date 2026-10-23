@@ -75,13 +75,22 @@ void MinUi::open() {
     const int fd = ::open(path.c_str(), O_RDONLY | O_NONBLOCK | O_CLOEXEC);
     if (fd < 0) continue;
     unsigned long keys[(KEY_MAX + 8 * sizeof(long)) / (8 * sizeof(long))] = {};
-    if (ioctl(fd, EVIOCGBIT(EV_KEY, sizeof keys), keys) >= 0 &&
-        ((keys[KEY_POWER / (8 * sizeof(long))] >> (KEY_POWER % (8 * sizeof(long)))) & 1)) {
-      char name[64] = "?";
+    const auto has = [&](int code) {
+      return ((keys[code / (8 * sizeof(long))] >> (code % (8 * sizeof(long)))) & 1) != 0;
+    };
+    const bool got_keys = ioctl(fd, EVIOCGBIT(EV_KEY, sizeof keys), keys) >= 0;
+    char name[64] = "?";
+    if (got_keys && fd_ < 0 && has(KEY_POWER)) {
       ioctl(fd, EVIOCGNAME(sizeof name), name);
       fd_ = fd;
       std::fprintf(stderr, "minui: power button on %s (%s)\n", path.c_str(), name);
-      break;
+      continue;
+    }
+    if (got_keys && (has(KEY_VOLUMEUP) || has(KEY_VOLUMEDOWN))) {
+      ioctl(fd, EVIOCGNAME(sizeof name), name);
+      volume_fds_.push_back(fd);
+      std::fprintf(stderr, "minui: volume keys on %s (%s)\n", path.c_str(), name);
+      continue;
     }
     ::close(fd);
   }
@@ -93,7 +102,23 @@ void MinUi::open() {
 void MinUi::close() {
 #ifdef __linux__
   if (fd_ >= 0) { ::close(fd_); fd_ = -1; }
+  for (int fd : volume_fds_) ::close(fd);
+  volume_fds_.clear();
 #endif
+}
+
+bool MinUi::take_volume() {
+#ifdef __linux__
+  // Drained here as well as in poll(): nothing else reads these nodes, and
+  // a backlog would report a chord long since over.
+  input_event ev;
+  for (int fd : volume_fds_)
+    while (read(fd, &ev, sizeof ev) == static_cast<ssize_t>(sizeof ev))
+      if (ev.type == EV_KEY && (ev.code == KEY_VOLUMEUP || ev.code == KEY_VOLUMEDOWN) && ev.value == 1) volume_seen_ = true;
+#endif
+  const bool seen = volume_seen_;
+  volume_seen_ = false;
+  return seen;
 }
 
 MinUi::Event MinUi::poll() {
@@ -103,6 +128,7 @@ MinUi::Event MinUi::poll() {
   // Drain the burst; only the last transition matters.
   input_event ev;
   while (read(fd_, &ev, sizeof ev) == static_cast<ssize_t>(sizeof ev)) {
+    if (ev.type == EV_KEY && (ev.code == KEY_VOLUMEUP || ev.code == KEY_VOLUMEDOWN) && ev.value == 1) volume_seen_ = true;
     if (ev.type != EV_KEY || ev.code != KEY_POWER) continue;
     if (ev.value == 1) {                       // press (2 is autorepeat)
       down_ = true;

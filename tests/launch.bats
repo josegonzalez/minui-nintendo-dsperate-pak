@@ -368,3 +368,119 @@ write_state() {
     printf '%s\n' "$ROM_PATH" --fullscreen --load-state "$DSP_STATES_DIR/Some Game (USA).3.dss" >"$BATS_TEST_TMPDIR/want.txt"
     diff "$BATS_TEST_TMPDIR/want.txt" "$BATS_TEST_TMPDIR/argv.txt"
 }
+
+# A fake NextUI: its settings file and the two fonts it ships.
+fake_nextui() {
+    mkdir -p "$SDCARD_PATH/.system/res"
+    : >"$SDCARD_PATH/.system/res/font1.ttf"
+    : >"$SDCARD_PATH/.system/res/font2.ttf"
+    printf '%s\n' "$@" >"$SHARED_USERDATA_PATH/minuisettings.txt"
+}
+
+@test "the pause menu takes NextUI's look, font and theme colours" {
+    fake_nextui "font=1" "color1=0xFFFFFFFF" "color2=0x9B2257FF" "color7=0x000000FF"
+    dsp_detect_style
+    [ "$MINUI_STYLE" = "nextui" ]
+    [ "$MINUI_FONT" = "$SDCARD_PATH/.system/res/font1.ttf" ]
+    [ "$MINUI_COLOR2" = "0x9B2257FF" ]
+    [ "$MINUI_COLOR7" = "0x000000FF" ]
+    # Exported, so DSperate sees them.
+    [ "$(sh -c 'echo "$MINUI_STYLE $MINUI_COLOR2"')" = "nextui 0x9B2257FF" ]
+}
+
+@test "NextUI's font setting is read the way NextUI reads it" {
+    fake_nextui "font=0"
+    dsp_detect_style
+    [ "$MINUI_FONT" = "$SDCARD_PATH/.system/res/font2.ttf" ]
+
+    fake_nextui "brightness=5"
+    dsp_detect_style
+    [ "$MINUI_FONT" = "$SDCARD_PATH/.system/res/font1.ttf" ]
+
+    : >"$SDCARD_PATH/.system/res/custom.ttf"
+    fake_nextui "font=custom.ttf"
+    dsp_detect_style
+    [ "$MINUI_FONT" = "$SDCARD_PATH/.system/res/custom.ttf" ]
+
+    # A font named but not on the card is not handed on.
+    fake_nextui "font=gone.ttf"
+    dsp_detect_style
+    [ "$MINUI_FONT" = "$SDCARD_PATH/.system/res/font1.ttf" ]
+}
+
+@test "a settings line written with a carriage return still reads" {
+    printf 'font=0\r\ncolor2=0x112233FF\r\n' >"$SHARED_USERDATA_PATH/minuisettings.txt"
+    mkdir -p "$SDCARD_PATH/.system/res"
+    : >"$SDCARD_PATH/.system/res/font1.ttf"
+    : >"$SDCARD_PATH/.system/res/font2.ttf"
+    dsp_detect_style
+    [ "$MINUI_FONT" = "$SDCARD_PATH/.system/res/font2.ttf" ]
+    [ "$MINUI_COLOR2" = "0x112233FF" ]
+}
+
+@test "stock MinUI gets its own look and BPreplay" {
+    mkdir -p "$SDCARD_PATH/.system/res"
+    : >"$SDCARD_PATH/.system/res/BPreplayBold-unhinted.otf"
+    dsp_detect_style
+    [ "$MINUI_STYLE" = "minui" ]
+    [ "$MINUI_FONT" = "$SDCARD_PATH/.system/res/BPreplayBold-unhinted.otf" ]
+}
+
+@test "minuisettings.txt alone is not NextUI" {
+    # MinUI forks write the file too; NextUI is the one that ships font1.ttf.
+    printf 'brightness=5\n' >"$SHARED_USERDATA_PATH/minuisettings.txt"
+    dsp_detect_style
+    [ "$MINUI_STYLE" = "minui" ]
+}
+
+@test "no font on the card leaves the menu its built-in one" {
+    dsp_detect_style
+    [ "$MINUI_STYLE" = "minui" ]
+    [ -z "$MINUI_FONT" ]
+}
+
+@test "every profile opens the pause menu on a MENU tap" {
+    dsp_seed_config
+    grep -q '^pause.alt = mod$' "$DSP_CONFIG"
+    # And migration has nothing to add to it.
+    cp "$DSP_CONFIG" "$BATS_TEST_TMPDIR/seeded.ini"
+    dsp_migrate_config
+    cmp -s "$DSP_CONFIG" "$BATS_TEST_TMPDIR/seeded.ini"
+}
+
+@test "an older config gains the MENU tap once, under [padhotkeys]" {
+    printf '[pad]\na = b\n\n[padhotkeys]\npause = mod+y\n\n[cheevos]\nenabled = true\n' >"$DSP_CONFIG"
+    dsp_migrate_config
+    dsp_migrate_config
+    [ "$(grep -c '^pause.alt = mod$' "$DSP_CONFIG")" -eq 1 ]
+    # In the section, not after it.
+    [ "$(sed -n '/^\[padhotkeys\]/,/^\[cheevos\]/p' "$DSP_CONFIG" | grep -c '^pause.alt = mod$')" -eq 1 ]
+    grep -q '^pause = mod+y$' "$DSP_CONFIG"
+    grep -q '^enabled = true$' "$DSP_CONFIG"
+}
+
+@test "a player's own pause.alt is kept, even none" {
+    printf '[padhotkeys]\npause = mod+y\npause.alt = none\n' >"$DSP_CONFIG"
+    dsp_migrate_config
+    ! grep -q '^pause.alt = mod$' "$DSP_CONFIG"
+    grep -q '^pause.alt = none$' "$DSP_CONFIG"
+}
+
+@test "a keyboard pause.alt does not count as the pad's" {
+    printf '[hotkeys]\npause.alt = F1\n\n[padhotkeys]\npause = mod+y\n' >"$DSP_CONFIG"
+    dsp_migrate_config
+    [ "$(sed -n '/^\[padhotkeys\]/,$p' "$DSP_CONFIG" | grep -c '^pause.alt = mod$')" -eq 1 ]
+    grep -q '^pause.alt = F1$' "$DSP_CONFIG"
+}
+
+@test "a config with no [padhotkeys] gains one" {
+    printf '[pad]\na = b\n' >"$DSP_CONFIG"
+    dsp_migrate_config
+    [ "$(sed -n '/^\[padhotkeys\]/,$p' "$DSP_CONFIG" | grep -c '^pause.alt = mod$')" -eq 1 ]
+}
+
+@test "no config means nothing to migrate" {
+    rm -f "$DSP_CONFIG"
+    dsp_migrate_config
+    [ ! -f "$DSP_CONFIG" ]
+}

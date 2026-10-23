@@ -110,6 +110,8 @@ The ctest build also links `-lstdc++fs`. The test executables use `std::filesyst
 
 Every test executable is an LTO link of the whole core, and at one job per CPU those links can run a desktop Docker VM out of memory, which shows up as `Error 137`. `JOBS` caps the parallelism of both the shipping and the ctest builds; `make build JOBS=4` matches the 4-core CI runner.
 
+`minui_menu` is the pak's own suite, `overlay/tests/minui_menu_test.cpp`, copied into `tests/` by the `clone` rule and registered by patch 0003. It drives the pause menu with fake settings and achievement hosts the way upstream's `menu` test drives upstream's, draws every page into a guarded canvas at every panel size, and checks that a thumbnail written the way `write_png` writes one comes back through stb_image. It needs no SDL, so it runs in the container.
+
 `input` is excluded. It links SDL2, the only libSDL2 in the container is the sysroot's, and putting that on `LD_LIBRARY_PATH` drags its glibc in front of the container's loader: `undefined symbol: __libc_vfork, version GLIBC_PRIVATE`. Nothing to do with the code. `RUN_CTEST=0` skips the suite entirely, `CTEST_EXCLUDE` adjusts the filter.
 
 `make test` is the host-side bats suite, which needs no toolchain: `abi.bats` drives `check-abi.sh` through a stubbed `readelf`, `makefile.bats` reads the build wiring through `print-%`, and `platform.bats`/`launch.bats` source the launcher with `DSP_PAK_TEST=1`.
@@ -135,10 +137,11 @@ Pinning is all the workflow does. Reviewing the pull request is the rest of the 
 
 ## The MinUI integration
 
-`overlay/minui.{h,cpp}` is vendored here and copied into the
-DSperate tree by the `clone` rule; `patches/0003-minui-integration.patch` only ever modifies files
-upstream already has. That split is deliberate: a patch that creates files conflicts far more
-readily on a tag bump, and 0003 is the patch most likely to need a rebase.
+The files in `overlay/` (named by `MINUI_OVERLAY` in the `Makefile`) are vendored here and copied
+into the DSperate tree by the `clone` rule, along with the pause menu's test suite from
+`overlay/tests/`; `patches/0003-minui-integration.patch` only ever modifies files upstream already
+has. That split is deliberate: a patch that creates files conflicts far more readily on a tag bump,
+and 0003 is the patch most likely to need a rebase.
 
 ### The power button is read from evdev, not SDL
 
@@ -214,6 +217,47 @@ which dispatches on the magic bytes rather than the extension. MinUI's SDL_image
 — it loads its own UI atlas that way at `common/api.c:150` — so there is no reason for the pak to
 carry an image encoder of its own.
 
+### The pause menu
+
+`overlay/minui_menu.{h,cpp}` is minarch's in-game menu: Continue, Save, Load, Options and Quit over the dimmed game, the game's name in a pill, the battery, the button hints, and a preview window that shows the launcher's own thumbnail of the selected slot. Options holds every page DSperate's own menu has, drawn as minarch draws its option lists. The layout units, colours and offsets are minarch's (`PILL_SIZE`, `BUTTON_SIZE`, `PADDING` and the rest), times 3 on the 1024x768 Brick and 2 everywhere else, as minarch's `FIXED_SCALE` is. Neither MinUI (no licence) nor NextUI (PolyForm Noncommercial) is copied from: they are the reference for numbers and behaviour only, and everything is drawn procedurally rather than from the launcher's `assets@2x.png`.
+
+It replaces upstream's menu by type and nothing else. `MinUiMenu` has `ds::sdl::Menu`'s public API method for method and uses `Menu`'s own public types (`Menu::Result`, `Menu::GameEntry`, `Menu::kAutoSlot`), so main.cpp's switch over results and its seven draw calls compile unchanged: the patch swaps one declaration. Settings, bindings, cheats and achievements come only through the interfaces upstream already keeps `menu.cpp` behind, `SettingsHost`, `CheevosHost`, the `Setting` tables and `cheat::Code`, never through `Menu`'s internals. `menu.h` and `menu.cpp` are not patched at all, and `tests/makefile.bats` asserts that. What an upstream change does to it:
+
+| Upstream change | Effect |
+| --- | --- |
+| main.cpp calls a new `Menu` method | Compile error; add a forwarder |
+| A `SettingsHost` or `CheevosHost` signature changes | Compile error |
+| A settings row is added, renamed or removed | Picked up: the settings pages walk upstream's tables |
+| A `Menu::Result` value is added | Harmless; the pak never returns it |
+| `Input`'s modifier flags are renamed | Compile error in the one-line `input.h` hunk |
+
+None of them fails silently. Two things stay upstream's, on a `Menu` the pak's menu embeds: the game picker a cart-less firmware boot raises, which a pak never does, and everything, when no `MINUI_DIR` names a launcher, so a desktop build is exactly upstream's.
+
+Behaviour that differs from upstream's menu, all of it minarch's:
+
+- Save leaves the menu. The menu returns `Save`, the frontend saves, and the next tick returns `Resume` with nothing pressed, which closes through the frontend's ordinary path.
+- The root's slot picker has minarch's eight slots, all the launcher's switcher lists. The slot hotkeys still reach 8 and 9, so Options > Manage Save Slots lists all ten and the auto state, and deletes on a second A.
+- Lists wrap at the ends, except cheats and achievements, which can be thousands of rows long.
+- Reset, Save Changes (upstream's "SAVE TO" switch) and the slot page live under Options rather than on the root.
+
+Every tier hands the menu a different canvas, and the drawing is straight-alpha source-over that is correct on all of them. On the fbdev and DRM scanline tiers the canvas is the scanout frame, already holding the dimmed game, so it is opaque. On the display-engine tier it is an ARGB overlay cleared to 0 that the display engine blends per pixel (`alpha_mode 0`, not premultiplied), and on the GPU tier an overlay blended `SRC_ALPHA, ONE_MINUS_SRC_ALPHA`; there a pill's smoothed edge has to come out partially transparent rather than blended against black. The root draws over the game, which the frontend has already dimmed by half, as minarch's 50% overlay does. The options pages paint the canvas opaque, as minarch clears to black. On the SDL renderer tier the canvas is a 256x192 scratch that is scaled like a frame; the menu draws there at a fraction of a unit, legible but small.
+
+`launch.sh` picks the look, in `dsp_detect_style`, and the menu reads it from the environment:
+
+| Variable | Value |
+| --- | --- |
+| `MINUI_STYLE` | `nextui` when `.userdata/shared/minuisettings.txt` and `.system/res/font1.ttf` both exist, else `minui` |
+| `MINUI_FONT` | NextUI: `font1.ttf`, or `font2.ttf` for `font=0`, or the file `font=` names. MinUI: `BPreplayBold-unhinted.otf`. Empty when the card has none, which draws with DSperate's 5x7 font |
+| `MINUI_COLOR1..7` | NextUI's `color1..7` as written (`0xRRGGBBAA`); unset ones keep NextUI's defaults |
+
+NextUI's look puts the title in an accent pill (color2) and the selection in color1 with color5 text, with no text shadow. MinUI's is a black title pill, a white selection with black text, and a black shadow under every other row. The `font=` reading follows NextUI's `config.c`, where `0` and `1` are the numbers older releases wrote.
+
+Text is drawn with the launcher's own font through `stb_truetype.h`, and thumbnails are decoded with `stb_image.h`, both nothings/stb at the commit `minui_stb.cpp` names, unmodified, and public domain or MIT at the user's choice, which GPLv3 can absorb. Their implementations are compiled once, in `minui_stb.cpp`, with `-w`. stb_image decodes PNG and BMP by content, so it reads the PNG bytes this pak and NextUI write under the launcher's `.bmp` name, and the real BMP MinUI writes. Neither header adds a library: stb_image has its own inflate, and stb_truetype needs only libm, which the binary already links. BPreplay is a CFF-flavoured OTF, which stb_truetype has read since 1.13. Font sizes match SDL_ttf's (the em height in pixels), so minarch's `FONT_LARGE` and the rest come out the same size.
+
+A bare MENU tap opens the menu because upstream already fires a hotkey bound to `mod` alone when the modifier is released with nothing else pressed (`Bind::ModAlone`), and the profiles bind `pause.alt = mod`; MENU+Y is still `pause`, and the `Pause` action already closes an open menu. The profiles are seeded once, so `dsp_migrate_config` adds the binding to an older config under `[padhotkeys]`, once, and leaves alone any `pause.alt` the player set there, `none` included.
+
+That tap has one trap. MENU+VOL is the launcher's brightness chord, which its own daemon reads over evdev, so SDL sees only a MENU press and release with nothing between them, which is a tap. `MinUi` therefore also watches the evdev nodes that report `KEY_VOLUMEUP`/`KEY_VOLUMEDOWN`, and when one goes down the frontend calls `Input::spoil_mod_tap()`, the one-line `input.h` hunk, which marks the modifier as used so its release fires nothing.
+
 ## h700 pad numbering
 
 NextUI h700-rc11 changed how its SDL presents the built-in Anbernic pad. Before rc11 the button numbers depended on the model, which is why `config/platform.sh` carries three per-model `DSP_MAP_H700_*` bodies. From rc11, every H700 model reports the TrimUI (tg5040) numbers, L2/R2 become axes 2 and 5, and the pad's GUID changes to `19000000010000000100000000016e01`.
@@ -230,4 +274,6 @@ The per-model bodies only matter for pre-rc11 builds and can go once those are n
 - **The display tier on TrimUI is unverified.** The A133P is Allwinner, so `/dev/disp` may answer and the display-engine tier — written and measured for the Miyoo A30 — could open first. `--no-disp` is the escape hatch and the `video:` log line says which tier actually opened.
 - **`:latest` toolchain images.** House convention, but a green build today can be red tomorrow with no repo change, and a toolchain glibc bump would trip the ABI gate. The gate firing is the desired behaviour; the per-platform `*_GLIBC_MAX` variables are the knob.
 - **`pad.face_fix` is left at upstream's `auto`, unverified.** Since v3.0.5 DSperate compares the SDL mapping with the kernel's `BTN_SOUTH`/`BTN_EAST` positions and swaps A/B or X/Y when they disagree. The mappings `config/platform.sh` exports are deliberately positional, so if a TrimUI or h700 kernel reports Nintendo-labelled codes this could undo them. Setting `face_fix = off` in the profiles is the fix if a device turns out to swap.
+- **The volume-key node is unverified.** The MENU+VOL suppression assumes the volume keys arrive as `KEY_VOLUMEUP`/`KEY_VOLUMEDOWN` on an evdev node, which the `minui: volume keys on ...` log line confirms. If a device reports them some other way, MENU+VOL changes the brightness and also opens the pause menu.
+- **The launcher fonts are unverified on hardware.** BPreplay and NextUI's font1 render correctly through stb_truetype on a desktop build. The `pause menu:` log line names the font in use; an empty one falls back to DSperate's 5x7 font.
 - **Root-owned build output.** Everything under `src/`, `build/` and `dist/` is written as root by the containers, so `make clean` from an unprivileged account can fail. `make clean-docker` does the delete from inside a container.
