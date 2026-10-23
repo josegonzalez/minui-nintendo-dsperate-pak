@@ -171,6 +171,18 @@ load test_helper
     ! grep -q 'CMAKE_EXE_LINKER_FLAGS=.*lpthread' "$REPO_ROOT/Makefile"
 }
 
+@test "JOBS caps build parallelism and defaults to one per CPU" {
+    # Every test executable is an LTO link of the whole core, which can run a
+    # desktop Docker VM out of memory at one job per core.
+    mk DSP_JOBS
+    [ "$output" = '$(nproc)' ]
+    run make -C "$REPO_ROOT" --no-print-directory print-DSP_JOBS JOBS=4
+    [ "$output" = "DSP_JOBS=4" ]
+    # Both container builds take it; nothing hardcodes nproc any more.
+    [ "$(grep -c -- '-j$(DSP_JOBS)' "$REPO_ROOT/Makefile")" -eq 2 ]
+    ! grep -q -- '-j\$\$(nproc)' "$REPO_ROOT/Makefile"
+}
+
 @test "the ctest build links std::filesystem for GCC 8" {
     # The test executables use std::filesystem through the core but do not link
     # stdc++fs, which GCC 8 keeps in a separate library: ctest fails to link

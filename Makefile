@@ -50,6 +50,12 @@ H700_GLIBC_MAX   ?= 2.28
 # on a mismatch. See TECHNICAL.md.
 DSPERATE_PGO ?= OFF
 RUN_CTEST ?= 1
+# Parallel compile and link jobs inside the containers; empty means one per CPU.
+# Every test executable is an LTO link of the whole core, so ctest's final
+# links can exhaust a desktop Docker VM's memory at one job per core.
+# `make build JOBS=4` matches the 4-core CI runner.
+JOBS ?=
+DSP_JOBS := $(if $(JOBS),$(JOBS),$$(nproc))
 # `input` is excluded because it links SDL2 and the container cannot run it: the
 # only libSDL2 here is the sysroot's, and putting the sysroot on LD_LIBRARY_PATH
 # drags its glibc in front of the container's loader, which dies on
@@ -158,7 +164,7 @@ define DSP_BUILD
 	    -DCMAKE_EXE_LINKER_FLAGS="-static-libstdc++ -static-libgcc $$DSP_SDL_LDFLAGS" \
 	    -DCMAKE_CXX_STANDARD_LIBRARIES="$(DSP_PTHREAD_LIBS)" \
 	    2>&1 | tee /build/build/$(1)/configure.log; \
-	  cmake --build /build/build/$(1) --target dsperate -- -j$$(nproc); \
+	  cmake --build /build/build/$(1) --target dsperate -- -j$(DSP_JOBS); \
 	  $$CC /build/scripts/pad-guid.c -o /build/build/$(1)/out/dsp-pad-guid -O2 \
 	    $$(pkg-config --cflags --libs sdl2)'
 	$(DOCKER_RUN_$(1)) /build/scripts/assert-build.sh /build/build/$(1)
@@ -220,7 +226,7 @@ ifeq ($(RUN_CTEST),1)
 	    -DCMAKE_CXX_FLAGS="-I$$CROSS_ROOT/include/ $(TG5040_CPUFLAGS) -pthread" \
 	    -DCMAKE_EXE_LINKER_FLAGS="-static-libstdc++ -static-libgcc $$DSP_SDL_LDFLAGS" \
 	    -DCMAKE_CXX_STANDARD_LIBRARIES="$(DSP_CTEST_LIBS)"; \
-	  cmake --build /build/build/ctest -- -j$$(nproc); \
+	  cmake --build /build/build/ctest -- -j$(DSP_JOBS); \
 	  ctest --test-dir /build/build/ctest --output-on-failure --timeout 300 \
 	    $(if $(CTEST_EXCLUDE),-E "$(CTEST_EXCLUDE)",)'
 else

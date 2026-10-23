@@ -116,7 +116,7 @@ These lines in that log are worth knowing:
 
 ## Development
 
-- `make build` cross-compiles DSperate for all three platforms and runs the upstream unit tests.
+- `make build` cross-compiles DSperate for all three platforms and runs the upstream unit tests. If Docker runs out of memory, `make build JOBS=4` limits how many compile and link jobs run at once.
 - `make test` runs the [bats](https://github.com/bats-core/bats-core) suite in `tests/`.
 - `make lint` runs shellcheck and shfmt.
 - `make release` produces `dist/DSP.pak.zip`.

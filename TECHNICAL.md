@@ -108,6 +108,8 @@ It runs once, with the tg5040 flag set. All three platforms build identical sour
 
 The ctest build also links `-lstdc++fs`. The test executables use `std::filesystem` through the core, which GCC 8 keeps in a separate library, and upstream only links it into `dsperate` itself. GCC 10 still ships the library, so it needs no compiler check. Reported upstream as [beebono/DSperate#24](https://github.com/beebono/DSperate/issues/24).
 
+Every test executable is an LTO link of the whole core, and at one job per CPU those links can run a desktop Docker VM out of memory, which shows up as `Error 137`. `JOBS` caps the parallelism of both the shipping and the ctest builds; `make build JOBS=4` matches the 4-core CI runner.
+
 `input` is excluded. It links SDL2, the only libSDL2 in the container is the sysroot's, and putting that on `LD_LIBRARY_PATH` drags its glibc in front of the container's loader: `undefined symbol: __libc_vfork, version GLIBC_PRIVATE`. Nothing to do with the code. `RUN_CTEST=0` skips the suite entirely, `CTEST_EXCLUDE` adjusts the filter.
 
 `make test` is the host-side bats suite, which needs no toolchain: `abi.bats` drives `check-abi.sh` through a stubbed `readelf`, `makefile.bats` reads the build wiring through `print-%`, and `platform.bats`/`launch.bats` source the launcher with `DSP_PAK_TEST=1`.
