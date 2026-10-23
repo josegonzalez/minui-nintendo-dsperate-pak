@@ -73,9 +73,38 @@ load test_helper
     [[ "$output" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
 }
 
+@test "the README names the pinned upstream version" {
+    mk DSPERATE_TAG
+    grep -qF "(version ${output#v})" "$REPO_ROOT/README.md"
+}
+
+@test "the pak records the oldest state format its DSperate reads" {
+    # launch.sh checks a state's header against it before asking for
+    # --load-state. It is read from upstream's source rather than hardcoded, so
+    # a format bump on a tag update needs no change here.
+    grep -q 'OLDEST_READABLE_VERSION' "$REPO_ROOT/Makefile"
+    grep -q 'src/core/state/state.h' "$REPO_ROOT/Makefile"
+    grep -q 'dsperate.state-version' "$REPO_ROOT/Makefile"
+    grep -q 'dsperate.state-version' "$REPO_ROOT/launch.sh"
+}
+
 @test "the shipping build never compiles the Wayland tier" {
     mk DSP_CMAKE_COMMON
     [[ "$output" == *"-DDSPERATE_WAYLAND=OFF"* ]]
+}
+
+@test "netplay is built in explicitly" {
+    # Upstream defaults it on; spelling it out keeps an upstream default change
+    # from flipping it without a diff here.
+    mk DSP_CMAKE_COMMON
+    [[ "$output" == *"-DDSPERATE_NET=ON"* ]]
+}
+
+@test "the Vulkan tier is never left to header detection" {
+    # Upstream enables it whenever the build host has vulkan headers, so leaving
+    # it unset would make the binary depend on the container image.
+    mk DSP_CMAKE_COMMON
+    [[ "$output" == *"-DDSPERATE_VULKAN=OFF"* ]]
 }
 
 @test "the shipping build requires the recompiler and the NEON kernels" {
@@ -142,6 +171,28 @@ load test_helper
     ! grep -q 'CMAKE_EXE_LINKER_FLAGS=.*lpthread' "$REPO_ROOT/Makefile"
 }
 
+@test "JOBS caps build parallelism and defaults to one per CPU" {
+    # Every test executable is an LTO link of the whole core, which can run a
+    # desktop Docker VM out of memory at one job per core.
+    mk DSP_JOBS
+    [ "$output" = '$(nproc)' ]
+    run make -C "$REPO_ROOT" --no-print-directory print-DSP_JOBS JOBS=4
+    [ "$output" = "DSP_JOBS=4" ]
+    # Both container builds take it; nothing hardcodes nproc any more.
+    [ "$(grep -c -- '-j$(DSP_JOBS)' "$REPO_ROOT/Makefile")" -eq 2 ]
+    ! grep -q -- '-j\$\$(nproc)' "$REPO_ROOT/Makefile"
+}
+
+@test "the ctest build links std::filesystem for GCC 8" {
+    # The test executables use std::filesystem through the core but do not link
+    # stdc++fs, which GCC 8 keeps in a separate library: ctest fails to link
+    # without it. The shipping binary gets it from upstream, so only ctest adds it.
+    mk DSP_CTEST_LIBS
+    [[ "$output" == *"-lstdc++fs"* ]]
+    [[ "$output" == *"-lpthread"* ]]
+    grep -q 'CMAKE_CXX_STANDARD_LIBRARIES="$(DSP_CTEST_LIBS)"' "$REPO_ROOT/Makefile"
+}
+
 @test "the ABI ceiling is asserted for every platform" {
     [ -x "$REPO_ROOT/scripts/check-abi.sh" ]
     grep -q "check-abi.sh \$(2)" "$REPO_ROOT/Makefile"
@@ -191,8 +242,25 @@ load test_helper
 @test "the GCC 8 workarounds are still present" {
     # Both are compiler bugs, not upstream ones: drop them when the toolchain
     # moves past GCC 8, not before.
-    [ -f "$REPO_ROOT/patches/0001-gcc8-constexpr-in-nested-lambda.patch" ]
     [ -f "$REPO_ROOT/patches/0002-gcc8-neon-scale-row-grid-miscompile.patch" ]
+    [ -f "$REPO_ROOT/patches/0005-gcc8-lto-layout-fp-contract.patch" ]
+}
+
+@test "the layout LTO workaround is scoped to GCC 8" {
+    # GCC 9 and later keep -ffp-contract=off across LTO, so only GCC 8 should
+    # lose the inlining.
+    p="$REPO_ROOT/patches/0005-gcc8-lto-layout-fp-contract.patch"
+    grep -q '^+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 9)' "$p"
+    grep -q '^+  set_property(SOURCE layout.cpp APPEND PROPERTY COMPILE_OPTIONS "-fno-lto")' "$p"
+    ! grep -q "new file mode" "$p"
+}
+
+@test "patches upstream has absorbed are gone" {
+    # 0001: the constexpr-in-nested-lambda rewrite landed upstream in v2.0.0.
+    # 0004: upstream's quit_early now closes the display on every early return.
+    # Either would fail to apply, which the clone rule treats as fatal.
+    [ ! -f "$REPO_ROOT/patches/0001-gcc8-constexpr-in-nested-lambda.patch" ]
+    [ ! -f "$REPO_ROOT/patches/0004-restore-display-on-early-exit.patch" ]
 }
 
 @test "the MinUI integration patch is present and adds no files" {
@@ -206,17 +274,6 @@ load test_helper
     # no reason to carry an image encoder of our own.
     ! grep -q "write_bmp" "$p"
     [ ! -f "$REPO_ROOT/overlay/minui_bmp.cpp" ]
-}
-
-@test "the scanout tiers restore the panel on an early exit" {
-    # Without these, a ROM or --load-state that fails after the display opens
-    # aborts on a joinable presenter thread and leaves the launcher's layer
-    # off: a dark panel until a reboot.
-    p="$REPO_ROOT/patches/0004-restore-display-on-early-exit.patch"
-    [ -f "$p" ]
-    grep -q '^+  ~DispOut() { close(); }' "$p"
-    grep -q '^+  ~FbdevOut() override { close(); }' "$p"
-    ! grep -q "new file mode" "$p"
 }
 
 @test "bump-version refuses to run without a version" {

@@ -316,3 +316,55 @@ run_resume() {
     run_resume "Some Game (USA).nds" ""
     diff "$BATS_TEST_TMPDIR/want.txt" "$BATS_TEST_TMPDIR/argv.txt"
 }
+
+# A state header: "DSST" and a little-endian u32 format version.
+write_state() {
+    printf "DSST\\$(printf '%03o' "$2")\\000\\000\\000" >"$1"
+}
+
+@test "a resume from a state DSperate can no longer read falls back to autoload" {
+    # DSperate refuses states older than its oldest readable format, and a
+    # refused --load-state holds the panel on an error and then fails the run.
+    printf '4' >"$PAK_DIR/dsperate.state-version"
+    dsp_init_env
+    mkdir -p "$DSP_STATES_DIR"
+    write_state "$DSP_STATES_DIR/Some Game (USA).3.dss" 2
+    run run_resume "Some Game (USA).nds" 3
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Some Game (USA).3.dss predates this DSperate (format 2, needs 4), falling back to autoload"* ]]
+    printf '%s\n' "$SDCARD_PATH/Roms/Nintendo DS (DSP)/Some Game (USA).nds" --fullscreen >"$BATS_TEST_TMPDIR/want.txt"
+    diff "$BATS_TEST_TMPDIR/want.txt" "$BATS_TEST_TMPDIR/argv.txt"
+}
+
+@test "a resume from a current state still passes it as one argument" {
+    printf '4' >"$PAK_DIR/dsperate.state-version"
+    dsp_init_env
+    mkdir -p "$DSP_STATES_DIR"
+    write_state "$DSP_STATES_DIR/Some Game (USA).3.dss" 4
+    run_resume "Some Game (USA).nds" 3
+    printf '%s\n' "$ROM_PATH" --fullscreen --load-state "$DSP_STATES_DIR/Some Game (USA).3.dss" >"$BATS_TEST_TMPDIR/want.txt"
+    diff "$BATS_TEST_TMPDIR/want.txt" "$BATS_TEST_TMPDIR/argv.txt"
+}
+
+@test "a resume from a file that is not a state falls back to autoload" {
+    printf '4' >"$PAK_DIR/dsperate.state-version"
+    dsp_init_env
+    mkdir -p "$DSP_STATES_DIR"
+    printf 'not a state' >"$DSP_STATES_DIR/Some Game (USA).3.dss"
+    run run_resume "Some Game (USA).nds" 3
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Some Game (USA).3.dss is not a DSperate state, falling back to autoload"* ]]
+    printf '%s\n' "$SDCARD_PATH/Roms/Nintendo DS (DSP)/Some Game (USA).nds" --fullscreen >"$BATS_TEST_TMPDIR/want.txt"
+    diff "$BATS_TEST_TMPDIR/want.txt" "$BATS_TEST_TMPDIR/argv.txt"
+}
+
+@test "without a recorded state version the state is passed through unchecked" {
+    # A pak built before dsperate.state-version existed must keep resuming.
+    rm -f "$PAK_DIR/dsperate.state-version"
+    dsp_init_env
+    mkdir -p "$DSP_STATES_DIR"
+    write_state "$DSP_STATES_DIR/Some Game (USA).3.dss" 2
+    run_resume "Some Game (USA).nds" 3
+    printf '%s\n' "$ROM_PATH" --fullscreen --load-state "$DSP_STATES_DIR/Some Game (USA).3.dss" >"$BATS_TEST_TMPDIR/want.txt"
+    diff "$BATS_TEST_TMPDIR/want.txt" "$BATS_TEST_TMPDIR/argv.txt"
+}
