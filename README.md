@@ -121,6 +121,8 @@ These lines in that log are worth knowing:
 - `make lint` runs shellcheck and shfmt.
 - `make release` produces `dist/DSP.pak.zip`.
 
+A scheduled workflow opens a pull request when DSperate publishes a new release. See "Bumping the upstream version" in TECHNICAL.md.
+
 See [TECHNICAL.md](TECHNICAL.md) for the build pipeline, the ABI floors, the toolchain workarounds and how to bump the upstream version.
 
 ## Credits

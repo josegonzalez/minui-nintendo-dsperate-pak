@@ -118,12 +118,18 @@ The ctest build also links `-lstdc++fs`. The test executables use `std::filesyst
 
 ## Bumping the upstream version
 
-Dependabot only covers Actions; `DSPERATE_TAG` is manual, and upstream ships tags often.
+Dependabot only covers Actions, so `.github/workflows/update-dsperate.yaml` watches for DSperate releases instead. Once a day it compares upstream's latest release with `DSPERATE_TAG`. On a new one it runs `scripts/bump-dsperate.sh`, which rewrites the pin in the `Makefile` and the version the README names, then `make clone` to see whether every patch still applies. It opens a pull request on `build/update-dsperate-<tag>` saying which patch, if any, failed. It skips a release that already has a branch, so a rebase pushed there is never reset.
 
-1. Set `DSPERATE_TAG` in the `Makefile`. `tests/makefile.bats` asserts it is a tag rather than a branch, and `make verify-pin` asserts the checkout matches.
-2. Read the upstream release notes for CMake option changes. A renamed switch fails open, because CMake ignores unknown `-D` cache args, and `assert-build.sh` is the only thing that would catch the consequence.
-3. `make clean build`. Every patch must still apply; if one does not, check whether upstream fixed it before rebasing.
-4. Re-measure the ABI table above if the toolchain images have moved.
+A pull request opened with the default `GITHUB_TOKEN` does not trigger `ci.yaml`, so the workflow uses a `GH_ACCESS_TOKEN` repository secret when there is one, a token with contents and pull-requests write access. Without it the pull request still opens, but nothing builds it until someone pushes to the branch.
+
+Pinning is all the workflow does. Reviewing the pull request is the rest of the bump:
+
+1. Read the upstream release notes for CMake option changes. A renamed switch fails open, because CMake ignores unknown `-D` cache args, and `assert-build.sh` is the only thing that would catch the consequence. Look for a new option that defaults on, too, and decide it explicitly in `DSP_CMAKE_COMMON`.
+2. Every patch must still apply. If one does not, check whether upstream fixed it before rebasing it on the branch.
+3. Check the release notes for removed ini keys, which upstream ignores silently, and for a save state format change. `dsperate.state-version` follows the format on its own, but users lose their old states and the release notes should say so.
+4. Re-measure the ABI table above.
+
+`tests/makefile.bats` asserts the pin is a tag rather than a branch and that the README names it, and `make verify-pin` asserts the checkout matches. To bump by hand, run `scripts/bump-dsperate.sh <tag>`.
 
 ## The MinUI integration
 
