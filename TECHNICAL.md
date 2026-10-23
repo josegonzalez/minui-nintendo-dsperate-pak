@@ -164,9 +164,10 @@ from the last parenthesised group of the Roms folder.
 | Resume after sleep | `.minui/auto_resume.txt` | card-relative ROM path, no newline |
 | Game switcher | `.minui/game_switcher.txt` | existence only |
 | Resume request | `/tmp/resume_slot.txt` | read and consumed by launch.sh |
+| Readable state format | `<pak>/dsperate.state-version` | one ASCII int, written at build time |
 | Screenshot | `/Screenshots/<display name>.<YYYY-MM-DD-HH-MM-SS>.png` | PNG |
 
-Four things here are silent when wrong, so they have tests:
+Five things here are silent when wrong, so they have tests:
 
 - **No trailing newline** on `auto_resume.txt` or the slot marker. The frontend concatenates
   without trimming, so one `\n` makes the resume quietly never happen. The module uses `fputs`;
@@ -182,7 +183,13 @@ Four things here are silent when wrong, so they have tests:
   launch.sh builds the argument list with `set --` rather than expanding a word list, and
   `tests/launch.bats` checks the argv DSperate actually receives. A slot whose `.dss` is missing
   is dropped in favour of autoload, because an explicit `--load-state` that cannot be read fails
-  the run.
+  the run, after holding the panel on a "STATE NOT LOADED" screen for up to a minute.
+- **A state must be in a format this DSperate reads.** A `.dss` is `DSST` and a little-endian u32
+  format version, and upstream refuses anything older than its `OLDEST_READABLE_VERSION`, which
+  v3.0.0 raised past every state an earlier pak wrote. `dist-common` reads that constant out of
+  `src/core/state/state.h` into `dsperate.state-version` at the pak root, and launch.sh compares a
+  slot's header against it and falls back to autoload on a mismatch. A missing file or an `od`
+  that cannot read the header skips the check rather than dropping a good state.
 
 Slots follow minarch: 0-7 are the player's and are the only ones the switcher lists, 8 is its
 hidden default, and 9 is the sleep autosave, which maps onto DSperate's own `.auto` slot. Matching

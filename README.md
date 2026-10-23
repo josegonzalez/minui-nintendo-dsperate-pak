@@ -86,6 +86,9 @@ Saving or loading a state also leaves the launcher a thumbnail, so the game show
 
 Quitting through the launcher writes a state, and the next launch picks it back up.
 
+> [!IMPORTANT]
+> DSperate 3.0 changed the save state format, and it cannot load states written by earlier releases of this pak. Battery saves in `/Saves/DSP/` are unaffected. Make an in-game save before upgrading. Picking an old state with RESUME starts the game from its autosave instead.
+
 ## Deep Sleep & Shutdown
 
 Deep sleep is handled by the emulator itself, on all three platforms.
@@ -108,6 +111,7 @@ These lines in that log are worth knowing:
 - `video: ...` names the display path that opened. Expect `fbdev scanout` on `h700`. Anything mentioning the SDL renderer means it fell back and will be slow.
 - The recompiler banner. An interpreter note instead means the JIT is off, and the emulator will be far too slow.
 - `resume state <path> not found, falling back to autoload` means RESUME in the game switcher asked for a save state slot that no longer exists, so the game started from its last autosave instead.
+- `resume state <path> predates this DSperate (format N, needs M), falling back to autoload` means the slot RESUME asked for was saved by an older DSperate that wrote a format this one cannot read, so the game started from its last autosave instead.
 - `state: no state in slot` or `state: cannot load ...` means DSperate refused the state RESUME asked for. The pak exits back to the launcher rather than starting the game from a state it cannot read.
 
 ## Development

@@ -159,8 +159,8 @@ dsp_seed_config() {
 # The state path is kept apart from the flag so dsp_run_emulator can pass it as
 # one argument. ROM names nearly always hold spaces, and DSperate takes every
 # stray word as the ROM. A slot whose state is gone (a stale marker, a deleted
-# file) falls back to autoload: an explicit --load-state that cannot be read
-# fails the whole run.
+# file) or is in a format this DSperate no longer reads falls back to autoload:
+# an explicit --load-state that cannot be read fails the whole run.
 dsp_resume_args() {
     DSP_RESUME_FLAG=""
     DSP_LOAD_STATE=""
@@ -180,13 +180,38 @@ dsp_resume_args() {
         _stem="$(basename "$ROM_PATH")"
         _stem="${_stem%.*}"
         _state="$DSP_STATES_DIR/$_stem.$_slot.dss"
-        if [ -f "$_state" ]; then
-            DSP_LOAD_STATE="$_state"
-        else
+        if [ ! -f "$_state" ]; then
             echo "resume state $_state not found, falling back to autoload"
+        elif dsp_state_readable "$_state"; then
+            DSP_LOAD_STATE="$_state"
         fi
         ;;
     esac
+}
+
+# Whether this build of DSperate can read a save state. A state is "DSST" and
+# a little-endian u32 format version; DSperate refuses anything older than the
+# version recorded in dsperate.state-version at build time, and a refused
+# --load-state fails the run, so the slot falls back to autoload instead.
+# Only a definite mismatch says no: without the recorded version, or without
+# an od that can read the header, the state is passed through as before.
+dsp_state_readable() {
+    _min="$(cat "$PAK_DIR/dsperate.state-version" 2>/dev/null | tr -dc '0-9')"
+    [ -n "$_min" ] || return 0
+
+    if [ "$(head -c 4 "$1" 2>/dev/null)" != "DSST" ]; then
+        echo "resume state $1 is not a DSperate state, falling back to autoload"
+        return 1
+    fi
+
+    # The format version is small, so its low byte is the whole value.
+    _ver="$(od -An -tu1 -j4 -N1 "$1" 2>/dev/null | tr -dc '0-9')"
+    [ -n "$_ver" ] || return 0
+    if [ "$_ver" -lt "$_min" ]; then
+        echo "resume state $1 predates this DSperate (format $_ver, needs $_min), falling back to autoload"
+        return 1
+    fi
+    return 0
 }
 
 # Run from $BIN_DIR. No --config: the seeded file is already at the default

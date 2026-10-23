@@ -261,6 +261,14 @@ dist-common: clone
 	@# GPLv3: ship the licence with the binaries and record exactly what they
 	@# were built from, so the corresponding-source obligation is answerable.
 	cp $(SRC)/DSperate/LICENSE $(DIST)/LICENSE.DSperate
+	@# The oldest save state format this build can read. launch.sh compares it
+	@# with a state's header before asking for --load-state, since a refused
+	@# state fails the run. Read from the source so a format bump needs no
+	@# change here; a missing match is fatal rather than a file launch.sh skips.
+	@v="$$(sed -n 's/^constexpr u32 OLDEST_READABLE_VERSION = \([0-9][0-9]*\);$$/\1/p' \
+		$(SRC)/DSperate/src/core/state/state.h)"; \
+		test -n "$$v" || { echo "error: OLDEST_READABLE_VERSION not found in state.h"; exit 1; }; \
+		printf '%s' "$$v" > $(DIST)/dsperate.state-version
 	@printf 'repo %s\ntag %s\ncommit %s\npatches %s\nflags %s\n' \
 		"$(DSPERATE_REPO)" "$(DSPERATE_TAG)" \
 		"$$(cd $(SRC)/DSperate && git rev-parse HEAD)" \

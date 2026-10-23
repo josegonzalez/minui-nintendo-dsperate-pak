@@ -78,6 +78,16 @@ load test_helper
     grep -qF "(version ${output#v})" "$REPO_ROOT/README.md"
 }
 
+@test "the pak records the oldest state format its DSperate reads" {
+    # launch.sh checks a state's header against it before asking for
+    # --load-state. It is read from upstream's source rather than hardcoded, so
+    # a format bump on a tag update needs no change here.
+    grep -q 'OLDEST_READABLE_VERSION' "$REPO_ROOT/Makefile"
+    grep -q 'src/core/state/state.h' "$REPO_ROOT/Makefile"
+    grep -q 'dsperate.state-version' "$REPO_ROOT/Makefile"
+    grep -q 'dsperate.state-version' "$REPO_ROOT/launch.sh"
+}
+
 @test "the shipping build never compiles the Wayland tier" {
     mk DSP_CMAKE_COMMON
     [[ "$output" == *"-DDSPERATE_WAYLAND=OFF"* ]]
