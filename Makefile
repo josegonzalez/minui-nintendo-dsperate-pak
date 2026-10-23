@@ -113,7 +113,7 @@ DSP_PTHREAD_LIBS := -Wl,--push-state,--no-as-needed -lpthread -Wl,--pop-state
 # lives in a separate libstdc++fs. Upstream links it into dsperate itself when
 # GCC < 9, but not into the tests. GCC 10 still ships the library, so this
 # needs no compiler check; it is ctest-only because the shipping binary
-# already gets it from upstream.
+# already gets it from upstream. https://github.com/beebono/DSperate/issues/24
 DSP_CTEST_LIBS := $(DSP_PTHREAD_LIBS) -lstdc++fs
 
 .PHONY: all build clone verify-pin patch dist release bump-version push lint test test-native clean clean-docker

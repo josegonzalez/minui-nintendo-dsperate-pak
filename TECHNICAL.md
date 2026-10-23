@@ -106,7 +106,7 @@ The patch builds `layout.cpp` outside LTO on GCC 8 only. Placement runs only whe
 
 It runs once, with the tg5040 flag set. All three platforms build identical source with identical options and only `-mcpu`/`-mtune` differ, which changes scheduling and not semantics; using the cortex-a53 build keeps the tested binary a strict ARMv8-A baseline. CI runs on `ubuntu-24.04-arm`, so the container is native arm64 and the cross-built binaries execute directly — no `qemu-aarch64-static`.
 
-The ctest build also links `-lstdc++fs`. The test executables use `std::filesystem` through the core, which GCC 8 keeps in a separate library, and upstream only links it into `dsperate` itself. GCC 10 still ships the library, so it needs no compiler check.
+The ctest build also links `-lstdc++fs`. The test executables use `std::filesystem` through the core, which GCC 8 keeps in a separate library, and upstream only links it into `dsperate` itself. GCC 10 still ships the library, so it needs no compiler check. Reported upstream as [beebono/DSperate#24](https://github.com/beebono/DSperate/issues/24).
 
 `input` is excluded. It links SDL2, the only libSDL2 in the container is the sysroot's, and putting that on `LD_LIBRARY_PATH` drags its glibc in front of the container's loader: `undefined symbol: __libc_vfork, version GLIBC_PRIVATE`. Nothing to do with the code. `RUN_CTEST=0` skips the suite entirely, `CTEST_EXCLUDE` adjusts the filter.
 
