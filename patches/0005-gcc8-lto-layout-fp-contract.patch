@@ -21,6 +21,8 @@ nothing is lost by not inlining it. tg5040 and h700 build with GCC 8.3.0,
 tg5050 with GCC 10.3.0, so this affects two of the three platforms, and the
 shipping dsperate there as well as the test.
 
+Upstream: https://github.com/beebono/DSperate/issues/23
+
 diff --git a/src/frontend/video/CMakeLists.txt b/src/frontend/video/CMakeLists.txt
 index a568f26..9817934 100644
 --- a/src/frontend/video/CMakeLists.txt

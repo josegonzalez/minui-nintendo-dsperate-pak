@@ -98,7 +98,7 @@ This is exactly what `ctest` is in the pipeline to catch, and it caught it on th
 | GCC 8.3.0 | `layout.cpp` built with `-fno-lto` | pass |
 | GCC 10.3.0 | `layout.cpp` off, the rest LTO-linked without it | pass |
 
-The patch builds `layout.cpp` outside LTO on GCC 8 only. Placement runs only when the layout or the output size changes, never per frame, so nothing is lost by not inlining it.
+The patch builds `layout.cpp` outside LTO on GCC 8 only. Placement runs only when the layout or the output size changes, never per frame, so nothing is lost by not inlining it. Reported upstream as [beebono/DSperate#23](https://github.com/beebono/DSperate/issues/23).
 
 ## Tests
 
