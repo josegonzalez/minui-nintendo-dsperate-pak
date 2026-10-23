@@ -61,7 +61,7 @@ It is passed as `CMAKE_CXX_STANDARD_LIBRARIES`, **not** `CMAKE_EXE_LINKER_FLAGS`
 
 `patches/` is applied to every build by the `clone` rule. A patch that no longer applies is fatal, so a drifted patch cannot produce a green build with the workaround silently missing.
 
-Both current patches are **GCC 8 compiler bugs, not upstream bugs**. Drop them when the tg5040 and h700 toolchains move past GCC 8, not before.
+`0001` and `0002` are **GCC 8 compiler bugs, not upstream bugs**. Drop them when the tg5040 and h700 toolchains move past GCC 8, not before.
 
 **`0001-gcc8-constexpr-in-nested-lambda.patch`** — GCC 8 treats a `constexpr` local of an enclosing lambda, read in an `if constexpr` inside a nested lambda, as a capture, and rejects it: `lambda capture of 'NH' is not a constant expression`, 97 times in `render3d.cpp`. Fixed in GCC 9. Naming the type directly is the same value with no odr-use. Reported upstream as [beebono/DSperate#1](https://github.com/beebono/DSperate/issues/1).
 
@@ -80,6 +80,8 @@ which is why the logic it wires in lives in `overlay/` rather than in the patch 
 Not an optimiser level: it reproduces at `-O3`, `-O2` and `-O1`, with and without LTO, and with `-fno-strict-aliasing`. The patch falls back to the portable reference on GCC 8 only; GCC 9 and later keep the NEON path, so tg5050 is unaffected. It costs performance only in the LCD-grid and chunky filters, which are off in the shipped default configuration.
 
 This is exactly what `ctest` is in the pipeline to catch, and it caught it on the first run.
+
+**`0004-restore-display-on-early-exit.patch`** is an upstream bug. Every early `return 1` in `main()` after the display opens (an unreadable ROM, a refused `--load-state`) skips `Display::close()`, and neither `DispOut` nor `FbdevOut` has a destructor. The still-joinable presenter thread then calls `std::terminate`, and on the display-engine tier the launcher's UI layer, which `DispOut::open()` turns off, is never turned back on. The launcher comes back up drawing into a layer nobody sees, so the panel stays dark until a reboot. That is how a failed RESUME from the game switcher became a hard reset in [#4](https://github.com/josegonzalez/minui-nintendo-dsperate-pak/issues/4). The patch gives both tiers a destructor that calls their already idempotent `close()`. `Display` itself gets none, because the early returns call `SDL_Quit()` first. Reported upstream as [beebono/DSperate#21](https://github.com/beebono/DSperate/issues/21); drop it once upstream fixes it.
 
 ## Tests
 
@@ -101,7 +103,7 @@ Dependabot only covers Actions; `DSPERATE_TAG` is manual, and upstream ships tag
 
 1. Set `DSPERATE_TAG` in the `Makefile`. `tests/makefile.bats` asserts it is a tag rather than a branch, and `make verify-pin` asserts the checkout matches.
 2. Read the upstream release notes for CMake option changes. A renamed switch fails open, because CMake ignores unknown `-D` cache args, and `assert-build.sh` is the only thing that would catch the consequence.
-3. `make clean build`. Both patches must still apply; if one does not, check whether upstream fixed it before rebasing.
+3. `make clean build`. Every patch must still apply; if one does not, check whether upstream fixed it before rebasing.
 4. Re-measure the ABI table above if the toolchain images have moved.
 
 ## The MinUI integration
@@ -145,7 +147,7 @@ from the last parenthesised group of the Roms folder.
 | Resume request | `/tmp/resume_slot.txt` | read and consumed by launch.sh |
 | Screenshot | `/Screenshots/<display name>.<YYYY-MM-DD-HH-MM-SS>.png` | PNG |
 
-Three things here are silent when wrong, so they have tests:
+Four things here are silent when wrong, so they have tests:
 
 - **No trailing newline** on `auto_resume.txt` or the slot marker. The frontend concatenates
   without trimming, so one `\n` makes the resume quietly never happen. The module uses `fputs`;
@@ -156,6 +158,12 @@ Three things here are silent when wrong, so they have tests:
 - **`autoload` alone is not enough.** minarch writes `8` to `/tmp/resume_slot.txt` for a plain
   launch, meaning "start fresh"; with the shipped `autoload = true` the pak would resume anyway,
   so launch.sh translates the marker into `--load-state` or `--no-autoload`.
+- **The state path is one argument.** ROM names nearly always hold spaces, and DSperate takes
+  every stray positional word as the ROM, so a split `--load-state` path boots nothing and exits.
+  launch.sh builds the argument list with `set --` rather than expanding a word list, and
+  `tests/launch.bats` checks the argv DSperate actually receives. A slot whose `.dss` is missing
+  is dropped in favour of autoload, because an explicit `--load-state` that cannot be read fails
+  the run.
 
 Slots follow minarch: 0-7 are the player's and are the only ones the switcher lists, 8 is its
 hidden default, and 9 is the sleep autosave, which maps onto DSperate's own `.auto` slot. Matching

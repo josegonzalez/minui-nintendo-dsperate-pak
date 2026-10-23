@@ -155,8 +155,15 @@ dsp_seed_config() {
 #
 # This matters because the shipped config has autoload on: without translating
 # the marker, picking a game fresh from the launcher would resume it anyway.
+#
+# The state path is kept apart from the flag so dsp_run_emulator can pass it as
+# one argument. ROM names nearly always hold spaces, and DSperate takes every
+# stray word as the ROM. A slot whose state is gone (a stale marker, a deleted
+# file) falls back to autoload: an explicit --load-state that cannot be read
+# fails the whole run.
 dsp_resume_args() {
-    DSP_RESUME_ARGS=""
+    DSP_RESUME_FLAG=""
+    DSP_LOAD_STATE=""
     [ -f /tmp/resume_slot.txt ] || return 0
 
     _slot="$(cat /tmp/resume_slot.txt 2>/dev/null | tr -dc '0-9')"
@@ -167,14 +174,34 @@ dsp_resume_args() {
         # Let autoload pick up the auto slot.
         ;;
     8)
-        DSP_RESUME_ARGS="--no-autoload"
+        DSP_RESUME_FLAG="--no-autoload"
         ;;
     *)
         _stem="$(basename "$ROM_PATH")"
         _stem="${_stem%.*}"
-        DSP_RESUME_ARGS="--load-state $DSP_STATES_DIR/$_stem.$_slot.dss"
+        _state="$DSP_STATES_DIR/$_stem.$_slot.dss"
+        if [ -f "$_state" ]; then
+            DSP_LOAD_STATE="$_state"
+        else
+            echo "resume state $_state not found, falling back to autoload"
+        fi
         ;;
     esac
+}
+
+# Run from $BIN_DIR. No --config: the seeded file is already at the default
+# path DSperate computes from XDG_CONFIG_HOME. No layout or performance flags
+# either -- flags override the ini, which would make them uneditable from the
+# pause menu.
+dsp_run_emulator() {
+    set -- "$ROM_PATH" --fullscreen
+    if [ -n "$DSP_LOAD_STATE" ]; then
+        set -- "$@" --load-state "$DSP_LOAD_STATE"
+    elif [ -n "$DSP_RESUME_FLAG" ]; then
+        set -- "$@" "$DSP_RESUME_FLAG"
+    fi
+
+    ./dsperate "$@"
 }
 
 cleanup() {
@@ -238,13 +265,8 @@ main() {
 
     dsp_resume_args
 
-    # No --config: the seeded file is already at the default path DSperate
-    # computes from XDG_CONFIG_HOME. No layout or performance flags either --
-    # flags override the ini, which would make them uneditable from the pause
-    # menu.
     cd "$BIN_DIR" || return 1
-    # shellcheck disable=SC2086 # DSP_RESUME_ARGS is a deliberate word list
-    ./dsperate "$ROM_PATH" --fullscreen $DSP_RESUME_ARGS
+    dsp_run_emulator
 }
 
 if [ "${DSP_PAK_TEST:-}" != "1" ]; then

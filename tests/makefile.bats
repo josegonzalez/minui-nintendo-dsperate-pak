@@ -208,6 +208,17 @@ load test_helper
     [ ! -f "$REPO_ROOT/overlay/minui_bmp.cpp" ]
 }
 
+@test "the scanout tiers restore the panel on an early exit" {
+    # Without these, a ROM or --load-state that fails after the display opens
+    # aborts on a joinable presenter thread and leaves the launcher's layer
+    # off: a dark panel until a reboot.
+    p="$REPO_ROOT/patches/0004-restore-display-on-early-exit.patch"
+    [ -f "$p" ]
+    grep -q '^+  ~DispOut() { close(); }' "$p"
+    grep -q '^+  ~FbdevOut() override { close(); }' "$p"
+    ! grep -q "new file mode" "$p"
+}
+
 @test "bump-version refuses to run without a version" {
     # `make release` calls it, and an unset RELEASE_VERSION would quietly rewrite
     # pak.json's version to the empty string.
