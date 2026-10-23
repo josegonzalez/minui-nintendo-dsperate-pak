@@ -148,6 +148,69 @@ dsp_seed_config() {
     sync
 }
 
+# A bare MENU tap opens the pause menu, as it does in minarch. The shipped
+# profiles bind it, but a config seeded by an older pak never will be again,
+# so add the binding once. A pause.alt the player already has, including
+# "none" to turn the tap off, is left alone.
+dsp_migrate_config() {
+    [ -f "$DSP_CONFIG" ] || return 0
+
+    if awk '
+        /^[[:space:]]*\[/ { section = $0; gsub(/[[:space:]]/, "", section) }
+        section == "[padhotkeys]" && /^[[:space:]]*pause\.alt[[:space:]]*=/ { found = 1 }
+        END { exit !found }
+    ' "$DSP_CONFIG"; then
+        return 0
+    fi
+
+    echo "Binding a MENU tap to the pause menu in $DSP_CONFIG"
+    if grep -q '^[[:space:]]*\[padhotkeys\][[:space:]]*$' "$DSP_CONFIG"; then
+        awk '
+            { print }
+            !done && /^[[:space:]]*\[padhotkeys\][[:space:]]*$/ { print "pause.alt = mod"; done = 1 }
+        ' "$DSP_CONFIG" >"$DSP_CONFIG.tmp" && mv -f "$DSP_CONFIG.tmp" "$DSP_CONFIG"
+    else
+        printf '\n[padhotkeys]\npause.alt = mod\n' >>"$DSP_CONFIG"
+    fi
+}
+
+# The pause menu dresses itself as the launcher that started it. NextUI keeps
+# its theme in minuisettings.txt and ships font1.ttf/font2.ttf; stock MinUI
+# has neither and uses BPreplay. Exports MINUI_STYLE, MINUI_FONT (empty means
+# the menu's built-in font) and, on NextUI, MINUI_COLOR1..7.
+dsp_detect_style() {
+    _res="$SDCARD_PATH/.system/res"
+    _settings="$SHARED_USERDATA_PATH/minuisettings.txt"
+    MINUI_STYLE="minui"
+    MINUI_FONT=""
+
+    if [ -f "$_settings" ] && [ -f "$_res/font1.ttf" ]; then
+        MINUI_STYLE="nextui"
+        # NextUI's own reading of font=: 0 is font2 and 1 is font1 (older
+        # releases wrote the number), anything else is a file name.
+        _font="$(sed -n 's/^font=//p' "$_settings" | tail -n 1 | tr -d '\r')"
+        case "$_font" in
+        0) _font="font2.ttf" ;;
+        "" | 1) _font="font1.ttf" ;;
+        esac
+        [ -f "$_res/$_font" ] || _font="font1.ttf"
+        MINUI_FONT="$_res/$_font"
+
+        for _i in 1 2 3 4 5 6 7; do
+            _colour="$(sed -n "s/^color$_i=//p" "$_settings" | tail -n 1 | tr -d '\r')"
+            if [ -n "$_colour" ]; then
+                eval "MINUI_COLOR$_i=\$_colour"
+                export "MINUI_COLOR$_i"
+            fi
+        done
+    elif [ -f "$_res/BPreplayBold-unhinted.otf" ]; then
+        MINUI_FONT="$_res/BPreplayBold-unhinted.otf"
+    fi
+
+    export MINUI_STYLE MINUI_FONT
+    echo "pause menu: $MINUI_STYLE look, font ${MINUI_FONT:-built-in}"
+}
+
 # The launcher asks for a state through /tmp/resume_slot.txt, and the file is
 # consumed. Its slots are minarch's: 0-7 are the player's, 8 means "plain
 # launch, start fresh", 9 is the state written before a sleep -- which here is
@@ -280,6 +343,8 @@ main() {
         "$MINUI_SHARED_DIR" "$MINUI_DIR"
 
     dsp_seed_config
+    dsp_migrate_config
+    dsp_detect_style
     dsp_export_pad_mapping
 
     # Only on a panel whose rotation SDL cannot tell DSperate about; the fbdev

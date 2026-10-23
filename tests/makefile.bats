@@ -230,13 +230,75 @@ load test_helper
     # be in the tree first or the build fails at the CMake target_sources line.
     mk OVERLAY
     [ -n "$output" ]
-    for f in minui.h minui.cpp; do
+    mk MINUI_OVERLAY
+    overlay="$output"
+    for f in minui.h minui.cpp minui_gfx.h minui_gfx.cpp minui_menu.h minui_menu.cpp minui_stb.cpp stb_image.h stb_truetype.h; do
+        [[ " $overlay " == *" $f "* ]] || return 1
+    done
+    for f in $overlay; do
         [ -f "$REPO_ROOT/overlay/$f" ] || return 1
     done
-    copy_line="$(grep -n 'OVERLAY)/minui' "$REPO_ROOT/Makefile" | head -1 | cut -d: -f1)"
+    # And nothing in overlay/ is left behind by the list.
+    for f in "$REPO_ROOT"/overlay/*.*; do
+        [[ " $overlay " == *" $(basename "$f") "* ]] || return 1
+    done
+    copy_line="$(grep -n 'cp $(addprefix $(OVERLAY)/,$(MINUI_OVERLAY))' "$REPO_ROOT/Makefile" | head -1 | cut -d: -f1)"
     patch_line="$(grep -n 'for p in $(PATCHES)/\*.patch' "$REPO_ROOT/Makefile" | head -1 | cut -d: -f1)"
     [ -n "$copy_line" ] && [ -n "$patch_line" ]
     [ "$copy_line" -lt "$patch_line" ]
+}
+
+@test "the pause menu's ctest suite is copied in and registered" {
+    mk MINUI_OVERLAY_TESTS
+    [ "$output" = "minui_menu_test.cpp" ]
+    [ -f "$REPO_ROOT/overlay/tests/minui_menu_test.cpp" ]
+    copy_line="$(grep -n 'cp $(addprefix $(OVERLAY)/tests/,$(MINUI_OVERLAY_TESTS)) $@/tests/' "$REPO_ROOT/Makefile" | head -1 | cut -d: -f1)"
+    patch_line="$(grep -n 'for p in $(PATCHES)/\*.patch' "$REPO_ROOT/Makefile" | head -1 | cut -d: -f1)"
+    [ -n "$copy_line" ] && [ "$copy_line" -lt "$patch_line" ]
+    p="$REPO_ROOT/patches/0003-minui-integration.patch"
+    grep -q '^+add_executable(test_minui_menu minui_menu_test.cpp' "$p"
+    grep -q '^+add_test(NAME minui_menu COMMAND test_minui_menu)' "$p"
+    # Not excluded the way the SDL-linked input test is: it needs no SDL.
+    mk CTEST_EXCLUDE
+    [[ "$output" != *minui* ]]
+}
+
+@test "patch 0003 never touches upstream's menu" {
+    # The MinUI menu stands in for ds::sdl::Menu through its public API and
+    # the settings/achievement host interfaces alone, so an upstream refactor
+    # of menu.cpp cannot break it silently. Patching menu.{h,cpp} would undo
+    # that.
+    p="$REPO_ROOT/patches/0003-minui-integration.patch"
+    ! grep -q '^diff --git a/src/frontend/sdl/menu\.' "$p"
+    ! grep -q '^diff --git a/src/frontend/sdl/settings\.' "$p"
+    grep -q '^+  ds::sdl::MinUiMenu menu;' "$p"
+    grep -q '^-  ds::sdl::Menu menu;' "$p"
+}
+
+@test "stb is vendored unmodified, pinned, and built in one place" {
+    for f in stb_image.h stb_truetype.h; do
+        grep -q "public domain" "$REPO_ROOT/overlay/$f" || return 1
+        grep -q "ALTERNATIVE A - MIT License" "$REPO_ROOT/overlay/$f" || return 1
+        # Implementations only in minui_stb.cpp.
+        [ "$(grep -l "define STB_.*_IMPLEMENTATION" "$REPO_ROOT"/overlay/*.cpp | xargs -n1 basename)" = "minui_stb.cpp" ] || return 1
+    done
+    grep -q 'nothings/stb at' "$REPO_ROOT/overlay/minui_stb.cpp"
+    grep -qE '[0-9a-f]{40}' "$REPO_ROOT/overlay/minui_stb.cpp"
+    # Only PNG and BMP: what the launcher's thumbnails are.
+    grep -q 'define STBI_ONLY_PNG' "$REPO_ROOT/overlay/minui_stb.cpp"
+    grep -q 'define STBI_ONLY_BMP' "$REPO_ROOT/overlay/minui_stb.cpp"
+    # Its warnings are switched off, and nobody else's.
+    p="$REPO_ROOT/patches/0003-minui-integration.patch"
+    grep -q '^+set_source_files_properties(minui_stb.cpp PROPERTIES COMPILE_OPTIONS "-w")' "$p"
+    [ "$(grep -c 'COMPILE_OPTIONS "-w"' "$p")" -eq 2 ]
+}
+
+@test "every profile opens the pause menu on a bare MENU tap" {
+    for f in "$REPO_ROOT"/config/dsperate/*.ini; do
+        sed -n '/^\[padhotkeys\]/,/^\[/p' "$f" | grep -q '^pause.alt = mod$' || return 1
+        # MENU+Y still works.
+        sed -n '/^\[padhotkeys\]/,/^\[/p' "$f" | grep -q '^pause = mod+y$' || return 1
+    done
 }
 
 @test "the GCC 8 workarounds are still present" {
@@ -290,4 +352,21 @@ load test_helper
     # RELEASE_VERSION. An unconditional bump-version there fails the build.
     grep -q 'if \[ -n "$(RELEASE_VERSION)" \]; then' "$REPO_ROOT/Makefile"
     ! grep -qE '^\t\$\(MAKE\) bump-version$' "$REPO_ROOT/Makefile"
+}
+
+@test "screenshots render the shipping menu, with fonts from pinned commits" {
+    grep -q '^screenshots: clone verify-pin$' "$REPO_ROOT/Makefile"
+    [ -f "$REPO_ROOT/scripts/render-menu.cpp" ]
+    # The real menu is linked, not a copy of it.
+    grep -q 'src/frontend/sdl/minui_menu.cpp' "$REPO_ROOT/Makefile"
+    grep -q '#include "frontend/sdl/minui_menu.h"' "$REPO_ROOT/scripts/render-menu.cpp"
+    # The fonts are fetched at an exact commit and never vendored.
+    for v in MINUI_FONT_URL NEXTUI_FONT_URL; do
+        mk "$v"
+        [[ "$output" =~ ^https://raw.githubusercontent.com/[^/]+/[^/]+/[0-9a-f]{40}/ ]] || return 1
+    done
+    [ -z "$(find "$REPO_ROOT/overlay" "$REPO_ROOT/config" -name '*.ttf' -o -name '*.otf')" ]
+    # Output stays under build/, which make clean removes.
+    mk SCREENSHOTS
+    [ "$output" = "$REPO_ROOT/build/screenshots" ]
 }

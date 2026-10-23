@@ -73,6 +73,12 @@ PATCHES := $(ROOT)/patches
 OVERLAY := $(ROOT)/overlay
 CROSS   := aarch64-nextui-linux-gnu-
 
+# The vendored MinUI sources the clone rule copies into src/frontend/sdl/, and
+# the ctest suite it copies into tests/. stb_*.h are nothings/stb, unmodified.
+MINUI_OVERLAY := minui.h minui.cpp minui_gfx.h minui_gfx.cpp minui_menu.h minui_menu.cpp \
+	minui_stb.cpp stb_image.h stb_truetype.h
+MINUI_OVERLAY_TESTS := minui_menu_test.cpp
+
 DOCKER_SCRIPT := /build/scripts/docker-env.sh
 DOCKER_RUN_tg5040 := docker run --rm -v $(ROOT):/build $(TG5040_IMAGE) $(DOCKER_SCRIPT)
 DOCKER_RUN_tg5050 := docker run --rm -v $(ROOT):/build $(TG5050_IMAGE) $(DOCKER_SCRIPT)
@@ -122,7 +128,7 @@ DSP_PTHREAD_LIBS := -Wl,--push-state,--no-as-needed -lpthread -Wl,--pop-state
 # already gets it from upstream. https://github.com/beebono/DSperate/issues/24
 DSP_CTEST_LIBS := $(DSP_PTHREAD_LIBS) -lstdc++fs
 
-.PHONY: all build clone verify-pin patch dist release bump-version push lint test test-native clean clean-docker
+.PHONY: all build clone verify-pin patch dist release bump-version push lint test test-native screenshots clean clean-docker
 
 all: dist
 
@@ -135,7 +141,8 @@ $(SRC)/DSperate:
 	git clone --depth 1 --branch $(DSPERATE_TAG) $(DSPERATE_REPO) $@
 	@# The MinUI module is vendored here rather than patched in, so patch 0003
 	@# only ever modifies files upstream already has.
-	cp $(OVERLAY)/minui.h $(OVERLAY)/minui.cpp $@/src/frontend/sdl/
+	cp $(addprefix $(OVERLAY)/,$(MINUI_OVERLAY)) $@/src/frontend/sdl/
+	cp $(addprefix $(OVERLAY)/tests/,$(MINUI_OVERLAY_TESTS)) $@/tests/
 	@# A patch that no longer applies is fatal: a drifted patch must not produce
 	@# a green build with the workaround silently missing.
 	cd $@ && for p in $(PATCHES)/*.patch; do \
@@ -232,6 +239,37 @@ ifeq ($(RUN_CTEST),1)
 else
 	@echo "skipping ctest (RUN_CTEST=$(RUN_CTEST))"
 endif
+
+# ── Screenshots ───────────────────────────────────────────────────────────────
+#
+# Every page of the pause menu, in both looks and at every panel size the pak
+# runs on, as PNGs in build/screenshots. scripts/render-menu.cpp links the
+# menu that ships and draws it over a stand-in game; nothing needs a device.
+# Built and run in the tg5040 container like ctest, so it runs natively on an
+# arm64 host and needs qemu anywhere else.
+#
+# The launcher fonts are fetched at a pinned commit rather than vendored:
+# MinUI carries no licence and NextUI's is noncommercial, so neither can ship
+# here. Without them, or offline, the menu's built-in font stands in.
+SCREENSHOTS := $(BUILD)/screenshots
+MINUI_FONT_URL  := https://raw.githubusercontent.com/shauninman/MinUI/53e0296ea5a2794290fb5783765af6cee0063445/skeleton/SYSTEM/res/BPreplayBold-unhinted.otf
+NEXTUI_FONT_URL := https://raw.githubusercontent.com/LoveRetro/NextUI/be751f7812bcfc1181b2f0da285bfcb02a5d57c3/skeleton/SYSTEM/res/font1.ttf
+
+screenshots: clone verify-pin
+	mkdir -p $(SCREENSHOTS)/fonts $(SCREENSHOTS)/obj
+	$(DOCKER_RUN_tg5040) bash -c 'set -euo pipefail; \
+	  F=/build/build/screenshots/fonts; O=/build/build/screenshots/obj; \
+	  fetch() { [ -s "$$2" ] || wget -q -O "$$2" "$$1" || { rm -f "$$2"; echo "screenshots: cannot fetch $$1; the built-in font stands in"; }; }; \
+	  fetch "$(MINUI_FONT_URL)" $$F/BPreplayBold-unhinted.otf; \
+	  fetch "$(NEXTUI_FONT_URL)" $$F/font1.ttf; \
+	  cd /build/src/DSperate; \
+	  for c in miniz miniz_tdef miniz_tinfl; do $$CC -O2 -w -Isrc -c src/core/cart/miniz/$$c.c -o $$O/$$c.o; done; \
+	  $$CXX -std=c++17 -O2 -w -Isrc -c src/frontend/sdl/minui_stb.cpp -o $$O/minui_stb.o; \
+	  $$CXX -std=c++17 -O2 -Isrc -static-libstdc++ -static-libgcc /build/scripts/render-menu.cpp \
+	    src/frontend/sdl/minui_menu.cpp src/frontend/sdl/minui_gfx.cpp src/frontend/sdl/menu.cpp \
+	    src/frontend/sdl/settings.cpp $$O/minui_stb.o $$O/miniz.o $$O/miniz_tdef.o $$O/miniz_tinfl.o \
+	    -lm -o $$O/render-menu; \
+	  $$O/render-menu /build/build/screenshots $$F/BPreplayBold-unhinted.otf $$F/font1.ttf'
 
 # ── Dist ──────────────────────────────────────────────────────────────────────
 

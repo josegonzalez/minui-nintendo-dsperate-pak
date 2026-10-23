@@ -61,10 +61,11 @@ Delete `device.txt` to have the profile applied again. Your previous config is k
 
 ## Key Controls
 
-MENU acts as the modifier for every chord.
+MENU acts as the modifier for every chord. Pressed and released on its own, it opens the pause menu.
 
+- MENU: Pause menu, and MENU or B again to close it
 - MENU + A: Quit
-- MENU + Y: Pause menu (save/load state, cheats, options, achievements)
+- MENU + Y: Pause menu
 - MENU + Up / Down: Cycle screen layout
 - MENU + B: Screenshot
 - MENU + X: Toggle the FPS counter
@@ -74,6 +75,20 @@ MENU acts as the modifier for every chord.
 - R2 (two-stick and one-stick devices): Hold for fast forward
 - L2: Tap the stylus at the pen's position
 - R2 (no-stick devices): Hold to move the pen with the d-pad
+
+## Pause menu
+
+The pause menu looks and works like the one every other system on the card uses:
+
+- Continue: Back to the game.
+- Save: Saves a state to the slot shown. Left and right pick one of eight slots, and the window beside the list shows what each one holds.
+- Load: Loads the state in the slot shown.
+- Options: Every setting DSperate has, as lists: Emulation, Visual FX, Layout, Controls and DS Options, then Cheats and Achievements when the game has them, Manage Save Slots to delete states, Save Changes to choose whether changes apply to every game or only this one, and Reset Game.
+- Quit: Returns to the launcher.
+
+On NextUI the menu follows the theme colours and font chosen in NextUI's settings. On MinUI it uses MinUI's own look.
+
+The MENU tap is `pause.alt = mod` in the `[padhotkeys]` section of the config. Configs from earlier versions of this pak gain that line on the next launch. Set it to `none` to keep MENU for chords only.
 
 ## Saves & States
 
@@ -106,6 +121,7 @@ Debug logs are written to the `/.userdata/$PLATFORM/logs/` folder, as `DSP.txt`.
 
 These lines in that log are worth knowing:
 
+- `pause menu: <look> look, font <path>` names the launcher look and the font the pause menu was given. `built-in` means no launcher font was found, and the menu draws with DSperate's own small font.
 - `controller: <name>` confirms the pad mapping was accepted. DSperate has no joystick fallback, so if this line is missing there will be no input at all.
 - `NextUI fixed h700 pad layout, using the TrimUI button numbers` appears on `h700` with NextUI rc11 or later. Without it, the pre-rc11 per-model button numbers are in use.
 - `video: ...` names the display path that opened. Expect `fbdev scanout` on `h700`. Anything mentioning the SDL renderer means it fell back and will be slow.
@@ -119,6 +135,7 @@ These lines in that log are worth knowing:
 - `make build` cross-compiles DSperate for all three platforms and runs the upstream unit tests. If Docker runs out of memory, `make build JOBS=4` limits how many compile and link jobs run at once.
 - `make test` runs the [bats](https://github.com/bats-core/bats-core) suite in `tests/`.
 - `make lint` runs shellcheck and shfmt.
+- `make screenshots` draws every page of the pause menu, in the MinUI and NextUI looks and at every panel size the pak supports, into `build/screenshots/`. No device is needed.
 - `make release` produces `dist/DSP.pak.zip`.
 
 A scheduled workflow opens a pull request when DSperate publishes a new release. See "Bumping the upstream version" in TECHNICAL.md.

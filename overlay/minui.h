@@ -30,6 +30,7 @@
 
 #include <functional>
 #include <string>
+#include <vector>
 
 namespace ds::sdl {
 
@@ -49,6 +50,13 @@ public:
   // Once a frame, from the top of the loop body so it runs while paused too.
   // Non-blocking.
   Event poll();
+
+  // Whether a volume key went down since the last call. MENU+VOL is the
+  // launcher's brightness chord, handled by its own daemon over evdev, and
+  // SDL sees only a lone MENU press and release around it -- which is the
+  // tap that opens the pause menu. The frontend spoils that tap when this
+  // says the chord happened.
+  bool take_volume();
 
   // The blocking half of a short press: runs `before`, takes the panel and the
   // audio down, waits for the next press, brings them back, runs `after`.
@@ -78,6 +86,10 @@ private:
   int  read_backlight() const;
 
   int         fd_ = -1;
+  // Nodes reporting KEY_VOLUMEUP/DOWN other than fd_ itself; the power node
+  // carries them too on some boards, and is read for them in poll().
+  std::vector<int> volume_fds_;
+  bool        volume_seen_ = false;
   bool        down_ = false;
   u32         pressed_at_ = 0;
   std::string rom_path_;      // card-relative, for auto_resume.txt
