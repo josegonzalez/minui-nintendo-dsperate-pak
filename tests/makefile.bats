@@ -353,3 +353,20 @@ load test_helper
     grep -q 'if \[ -n "$(RELEASE_VERSION)" \]; then' "$REPO_ROOT/Makefile"
     ! grep -qE '^\t\$\(MAKE\) bump-version$' "$REPO_ROOT/Makefile"
 }
+
+@test "screenshots render the shipping menu, with fonts from pinned commits" {
+    grep -q '^screenshots: clone verify-pin$' "$REPO_ROOT/Makefile"
+    [ -f "$REPO_ROOT/scripts/render-menu.cpp" ]
+    # The real menu is linked, not a copy of it.
+    grep -q 'src/frontend/sdl/minui_menu.cpp' "$REPO_ROOT/Makefile"
+    grep -q '#include "frontend/sdl/minui_menu.h"' "$REPO_ROOT/scripts/render-menu.cpp"
+    # The fonts are fetched at an exact commit and never vendored.
+    for v in MINUI_FONT_URL NEXTUI_FONT_URL; do
+        mk "$v"
+        [[ "$output" =~ ^https://raw.githubusercontent.com/[^/]+/[^/]+/[0-9a-f]{40}/ ]] || return 1
+    done
+    [ -z "$(find "$REPO_ROOT/overlay" "$REPO_ROOT/config" -name '*.ttf' -o -name '*.otf')" ]
+    # Output stays under build/, which make clean removes.
+    mk SCREENSHOTS
+    [ "$output" = "$REPO_ROOT/build/screenshots" ]
+}

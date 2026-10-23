@@ -256,6 +256,8 @@ Text is drawn with the launcher's own font through `stb_truetype.h`, and thumbna
 
 A bare MENU tap opens the menu because upstream already fires a hotkey bound to `mod` alone when the modifier is released with nothing else pressed (`Bind::ModAlone`), and the profiles bind `pause.alt = mod`; MENU+Y is still `pause`, and the `Pause` action already closes an open menu. The profiles are seeded once, so `dsp_migrate_config` adds the binding to an older config under `[padhotkeys]`, once, and leaves alone any `pause.alt` the player set there, `none` included.
 
+`make screenshots` renders the menu without a device. `scripts/render-menu.cpp` links the shipping menu, draws every page over a generated game picture with fake settings, cheats and achievements, and writes 112 PNGs to `build/screenshots/`: 14 pages, both looks, at 640x480, 720x720, 1024x768 and 1280x720. It is built with the tg5040 toolchain and run in that container, as ctest is, so it needs an arm64 host or qemu. The launcher fonts are fetched from MinUI and NextUI at pinned commits rather than vendored, because neither licence lets them ship here; offline, the built-in font stands in.
+
 That tap has one trap. MENU+VOL is the launcher's brightness chord, which its own daemon reads over evdev, so SDL sees only a MENU press and release with nothing between them, which is a tap. `MinUi` therefore also watches the evdev nodes that report `KEY_VOLUMEUP`/`KEY_VOLUMEDOWN`, and when one goes down the frontend calls `Input::spoil_mod_tap()`, the one-line `input.h` hunk, which marks the modifier as used so its release fires nothing.
 
 ## h700 pad numbering

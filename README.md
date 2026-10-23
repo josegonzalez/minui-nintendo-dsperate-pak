@@ -135,6 +135,7 @@ These lines in that log are worth knowing:
 - `make build` cross-compiles DSperate for all three platforms and runs the upstream unit tests. If Docker runs out of memory, `make build JOBS=4` limits how many compile and link jobs run at once.
 - `make test` runs the [bats](https://github.com/bats-core/bats-core) suite in `tests/`.
 - `make lint` runs shellcheck and shfmt.
+- `make screenshots` draws every page of the pause menu, in the MinUI and NextUI looks and at every panel size the pak supports, into `build/screenshots/`. No device is needed.
 - `make release` produces `dist/DSP.pak.zip`.
 
 A scheduled workflow opens a pull request when DSperate publishes a new release. See "Bumping the upstream version" in TECHNICAL.md.

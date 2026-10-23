@@ -128,7 +128,7 @@ DSP_PTHREAD_LIBS := -Wl,--push-state,--no-as-needed -lpthread -Wl,--pop-state
 # already gets it from upstream. https://github.com/beebono/DSperate/issues/24
 DSP_CTEST_LIBS := $(DSP_PTHREAD_LIBS) -lstdc++fs
 
-.PHONY: all build clone verify-pin patch dist release bump-version push lint test test-native clean clean-docker
+.PHONY: all build clone verify-pin patch dist release bump-version push lint test test-native screenshots clean clean-docker
 
 all: dist
 
@@ -239,6 +239,37 @@ ifeq ($(RUN_CTEST),1)
 else
 	@echo "skipping ctest (RUN_CTEST=$(RUN_CTEST))"
 endif
+
+# ── Screenshots ───────────────────────────────────────────────────────────────
+#
+# Every page of the pause menu, in both looks and at every panel size the pak
+# runs on, as PNGs in build/screenshots. scripts/render-menu.cpp links the
+# menu that ships and draws it over a stand-in game; nothing needs a device.
+# Built and run in the tg5040 container like ctest, so it runs natively on an
+# arm64 host and needs qemu anywhere else.
+#
+# The launcher fonts are fetched at a pinned commit rather than vendored:
+# MinUI carries no licence and NextUI's is noncommercial, so neither can ship
+# here. Without them, or offline, the menu's built-in font stands in.
+SCREENSHOTS := $(BUILD)/screenshots
+MINUI_FONT_URL  := https://raw.githubusercontent.com/shauninman/MinUI/53e0296ea5a2794290fb5783765af6cee0063445/skeleton/SYSTEM/res/BPreplayBold-unhinted.otf
+NEXTUI_FONT_URL := https://raw.githubusercontent.com/LoveRetro/NextUI/be751f7812bcfc1181b2f0da285bfcb02a5d57c3/skeleton/SYSTEM/res/font1.ttf
+
+screenshots: clone verify-pin
+	mkdir -p $(SCREENSHOTS)/fonts $(SCREENSHOTS)/obj
+	$(DOCKER_RUN_tg5040) bash -c 'set -euo pipefail; \
+	  F=/build/build/screenshots/fonts; O=/build/build/screenshots/obj; \
+	  fetch() { [ -s "$$2" ] || wget -q -O "$$2" "$$1" || { rm -f "$$2"; echo "screenshots: cannot fetch $$1; the built-in font stands in"; }; }; \
+	  fetch "$(MINUI_FONT_URL)" $$F/BPreplayBold-unhinted.otf; \
+	  fetch "$(NEXTUI_FONT_URL)" $$F/font1.ttf; \
+	  cd /build/src/DSperate; \
+	  for c in miniz miniz_tdef miniz_tinfl; do $$CC -O2 -w -Isrc -c src/core/cart/miniz/$$c.c -o $$O/$$c.o; done; \
+	  $$CXX -std=c++17 -O2 -w -Isrc -c src/frontend/sdl/minui_stb.cpp -o $$O/minui_stb.o; \
+	  $$CXX -std=c++17 -O2 -Isrc -static-libstdc++ -static-libgcc /build/scripts/render-menu.cpp \
+	    src/frontend/sdl/minui_menu.cpp src/frontend/sdl/minui_gfx.cpp src/frontend/sdl/menu.cpp \
+	    src/frontend/sdl/settings.cpp $$O/minui_stb.o $$O/miniz.o $$O/miniz_tdef.o $$O/miniz_tinfl.o \
+	    -lm -o $$O/render-menu; \
+	  $$O/render-menu /build/build/screenshots $$F/BPreplayBold-unhinted.otf $$F/font1.ttf'
 
 # ── Dist ──────────────────────────────────────────────────────────────────────
 
