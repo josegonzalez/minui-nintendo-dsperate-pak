@@ -152,8 +152,8 @@ private:
   void draw_account(minui_gfx::Painter& p, const minui_gfx::Metrics& m) const;
   void draw_cheevos(minui_gfx::Painter& p, const minui_gfx::Metrics& m) const;
   void draw_slots(minui_gfx::Painter& p, const minui_gfx::Metrics& m) const;
-  // The pill at the top left; returns nothing, sized to `max_w`.
-  void draw_title(minui_gfx::Painter& p, const minui_gfx::Metrics& m, const std::string& text, int max_w) const;
+  // The pill at the top left, no wider than `max_w`. Returns where it ends.
+  int  draw_title(minui_gfx::Painter& p, const minui_gfx::Metrics& m, const std::string& text, int max_w) const;
   // The battery pill at the top right. Returns its width, 0 with no battery.
   int  draw_hardware(minui_gfx::Painter& p, const minui_gfx::Metrics& m) const;
   // One of minarch's bottom pills: (button, hint) pairs.

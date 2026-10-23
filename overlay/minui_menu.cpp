@@ -714,14 +714,15 @@ void MinUiMenu::draw(const Canvas& d) const {
   }
 }
 
-void MinUiMenu::draw_title(Painter& p, const Metrics& m, const std::string& text, int max_w) const {
+int MinUiMenu::draw_title(Painter& p, const Metrics& m, const std::string& text, int max_w) const {
   const int px = m.u(Metrics::FONT_LARGE), bp = m.u(Metrics::BUTTON_PADDING);
   const int x = m.u(m.padding), y = m.u(m.padding), h = m.u(Metrics::PILL_SIZE);
-  if (max_w <= 2 * bp) return;
+  if (max_w <= 2 * bp) return x;
   const std::string shown = font_->fit(px, text, max_w - 2 * bp);
   const int w = std::min(max_w, font_->width(px, shown) + 2 * bp);
   p.pill(x, y, w, h, theme_.title_pill());
   font_->draw(p, x + bp, y + (h - font_->line_height(px)) / 2, px, theme_.title_text(), shown);
+  return x + w;
 }
 
 int MinUiMenu::draw_hardware(Painter& p, const Metrics& m) const {
@@ -909,9 +910,11 @@ void MinUiMenu::draw_list(Painter& p, const Metrics& m, const std::string& title
                           int sel, int& top, const std::vector<std::string>& desc, int value_w) const {
   const Canvas& c = p.canvas();
   p.clear(theme_.nextui ? theme_.color[6] : kBlack);
-  draw_hardware(p, m);
-  // Kept clear of the centred scroll arrow.
-  draw_title(p, m, title, c.w / 2 - m.u(m.padding) - m.u(14));
+  // The title has the band up to the battery, as on the root page; the
+  // scroll arrow that shares the band makes way for it below.
+  const int ow = draw_hardware(p, m);
+  const int band_end = c.w - m.u(m.padding) - (ow ? ow + m.u(m.padding) : 0);
+  const int title_end = draw_title(p, m, title, band_end - m.u(m.padding));
 
   const int row_h = m.u(Metrics::BUTTON_SIZE), op = m.u(Metrics::OPTION_PADDING);
   const int head = m.u(m.padding + Metrics::PILL_SIZE);
@@ -958,11 +961,19 @@ void MinUiMenu::draw_list(Painter& p, const Metrics& m, const std::string& title
 
   // Up and down arrows, centred, as minarch's ASSET_SCROLL_UP/DOWN: in the
   // title's band above the list, and in the row's worth of room below it.
+  // minarch has no title on these pages; ours can reach the centre, and then
+  // the up arrow sits in what is left of the band between it and the battery.
   const double aw = m.u(24), ah = std::max(2, m.u(Metrics::SCROLL_HEIGHT));
   const double ax = (c.w - aw) / 2.0;
   if (top > 0) {
     const double ay = m.u(m.padding) + (m.u(Metrics::PILL_SIZE) - ah) / 2;
-    fill_triangle(p, ax, ay + ah, ax + aw, ay + ah, ax + aw / 2, ay, kGray);
+    const double gap = m.u(4), lo = title_end + gap, hi = band_end - gap;
+    double x = ax, w = aw;
+    if (x < lo) {
+      w = std::min(aw, hi - lo);
+      x = lo + (hi - lo - w) / 2;
+    }
+    if (w >= m.u(8)) fill_triangle(p, x, ay + ah, x + w, ay + ah, x + w / 2, ay, kGray);
   }
   if (top + visible < n) {
     const double ay = head + visible * row_h + (row_h - ah) / 2;
@@ -1154,8 +1165,8 @@ void MinUiMenu::draw_slots(Painter& p, const Metrics& m) const {
 void MinUiMenu::draw_text_edit(Painter& p, const Metrics& m) const {
   const Canvas& c = p.canvas();
   p.clear(theme_.nextui ? theme_.color[6] : kBlack);
-  draw_hardware(p, m);
-  draw_title(p, m, edit_label_, c.w - m.u(m.padding * 2) - m.u(Metrics::PILL_SIZE) - m.u(m.padding));
+  const int ow = draw_hardware(p, m);
+  draw_title(p, m, edit_label_, c.w - m.u(m.padding * 2) - (ow ? ow + m.u(m.padding) : 0));
 
   // A long field wraps over two lines, as the console's own settings do.
   const int cols = std::max(1, edit_max_ > kEditCols ? (edit_max_ + 1) / 2 : edit_max_);

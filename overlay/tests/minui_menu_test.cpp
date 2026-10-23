@@ -793,6 +793,35 @@ void test_draw_bounds() {
   CHECK(tiny.guard_intact());
 }
 
+// A list page's title has the whole band up to the battery, as the root's
+// does, so the longer page names are not cut. They were once kept to half the
+// screen, clear of the centred scroll arrow, and "RetroAchievements" and
+// "Manage Save Slots" both lost their ends.
+void test_list_titles_are_not_cut() {
+  FakeHost h;
+  FakeCheevos c;
+  Cheats k;
+  MinUiMenu m(true);
+  gfx::Theme t;
+  t.nextui = true;                                                   // a title pill that shows on black
+  m.set_theme(t);
+  m.set_battery_root(scratch("no-battery"));
+  m.set_settings_host(&h);
+  m.set_cheevos_host(&c);
+  m.set_cheats(&k.codes, &k.groups);
+  const u32 accent = t.title_pill();
+  for (int row : {kAchievements, kSlots}) {
+    to_options(m, row);
+    m.input(press(B::BTN_A));
+    Guarded g(640, 480);
+    m.draw(g.canvas());
+    // 17 glyphs of the 5x7 font at scale 4 run past x=380; half the screen
+    // stopped the pill at 272. y=22 is the pill's edge, clear of the text.
+    CHECK(g.at(380, 22) == accent);
+    CHECK(g.guard_intact());
+  }
+}
+
 // The battery pill appears only when there is a battery to show.
 void test_battery_pill() {
   const std::string root = scratch("power_supply");
@@ -1002,6 +1031,7 @@ int main() {
   test_game_picker_is_upstreams();
   test_inactive_is_upstream();
   test_draw_bounds();
+  test_list_titles_are_not_cut();
   test_battery_pill();
   test_preview_shows_the_thumbnail();
   test_blend();
