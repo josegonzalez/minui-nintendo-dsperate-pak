@@ -29,7 +29,7 @@ Do not use upstream's `cmake/aarch64-linux-gnu.cmake` or the `aarch64-cross` pre
 
 ## Measured ABI
 
-`scripts/check-abi.sh` runs after `--strip-unneeded`, on the exact bytes that ship. Measured at v1.15.1:
+`scripts/check-abi.sh` runs after `--strip-unneeded`, on the exact bytes that ship. Measured at v3.0.5:
 
 | Platform | Ceiling | Measured | NEEDED |
 | --- | --- | --- | --- |
@@ -53,17 +53,25 @@ Each produces a binary that builds, links, boots and plays, just wrongly.
 
 ## pthread
 
-DSperate uses `std::thread` but never links `Threads::Threads`. Upstream never notices because glibc 2.34 folded libpthread into libc; below that it is a real library.
+DSperate uses `std::thread`, and glibc 2.34 folded libpthread into libc; below that it is a real library. Upstream's SDL frontend links `Threads::Threads` since v2, but the core and the test executables still do not, so the pak keeps forcing it onto every link line.
 
 It is passed as `CMAKE_CXX_STANDARD_LIBRARIES`, **not** `CMAKE_EXE_LINKER_FLAGS`. Linker flags land ahead of the objects that reference `pthread_create`, where `--as-needed` drops the library again; standard libraries are appended at the very end of the link line, the one place it survives. `--push-state`/`--pop-state` keeps `--no-as-needed` from applying to everything else on the line. `tests/makefile.bats` asserts this, because simplifying it into the linker flags regresses silently and only on glibc < 2.34.
+
+## Netplay and Vulkan
+
+Both are upstream options that default on, and both are set explicitly in `DSP_CMAKE_COMMON` rather than left to the default.
+
+`DSPERATE_NET=ON` builds netplay, with upstream's vendored slirp and enet. Spelling it out means an upstream default change shows up as a diff here rather than as a feature quietly appearing or disappearing.
+
+`DSPERATE_VULKAN=OFF`. None of these SoCs has Vulkan, and upstream's `find_path` for `vulkan/vulkan.h` deliberately looks outside the sysroot, so left alone the tier would be compiled in or out depending on whether the toolchain image happens to carry the headers.
 
 ## Patches
 
 `patches/` is applied to every build by the `clone` rule. A patch that no longer applies is fatal, so a drifted patch cannot produce a green build with the workaround silently missing.
 
-`0001` and `0002` are **GCC 8 compiler bugs, not upstream bugs**. Drop them when the tg5040 and h700 toolchains move past GCC 8, not before.
+`0002` and `0005` are **GCC 8 compiler bugs, not upstream bugs**. Drop them when the tg5040 and h700 toolchains move past GCC 8, not before.
 
-**`0001-gcc8-constexpr-in-nested-lambda.patch`** — GCC 8 treats a `constexpr` local of an enclosing lambda, read in an `if constexpr` inside a nested lambda, as a capture, and rejects it: `lambda capture of 'NH' is not a constant expression`, 97 times in `render3d.cpp`. Fixed in GCC 9. Naming the type directly is the same value with no odr-use. Reported upstream as [beebono/DSperate#1](https://github.com/beebono/DSperate/issues/1).
+Two earlier patches are gone because upstream absorbed them. `0001` worked around GCC 8 rejecting a `constexpr` local read from a nested lambda in `render3d.cpp`; upstream took the same rewrite in v2.0.0 ([beebono/DSperate#1](https://github.com/beebono/DSperate/issues/1)). `0004` gave the display-engine and fbdev tiers destructors, because an early `return 1` from `main()` skipped `Display::close()`, aborted on a joinable presenter thread and left the launcher's UI layer off, which is how a failed RESUME became a hard reset in [#4](https://github.com/josegonzalez/minui-nintendo-dsperate-pak/issues/4). Upstream now routes every early exit after the display opens through a `quit_early` lambda that closes it, so the bug cannot occur ([beebono/DSperate#21](https://github.com/beebono/DSperate/issues/21)). The numbers are not reused.
 
 **`0003-minui-integration.patch`** is not a compiler workaround and does not go away: it is the
 launcher integration described below. It is the patch most likely to need a rebase on a tag bump,
@@ -81,13 +89,24 @@ Not an optimiser level: it reproduces at `-O3`, `-O2` and `-O1`, with and withou
 
 This is exactly what `ctest` is in the pipeline to catch, and it caught it on the first run.
 
-**`0004-restore-display-on-early-exit.patch`** is an upstream bug. Every early `return 1` in `main()` after the display opens (an unreadable ROM, a refused `--load-state`) skips `Display::close()`, and neither `DispOut` nor `FbdevOut` has a destructor. The still-joinable presenter thread then calls `std::terminate`, and on the display-engine tier the launcher's UI layer, which `DispOut::open()` turns off, is never turned back on. The launcher comes back up drawing into a layer nobody sees, so the panel stays dark until a reboot. That is how a failed RESUME from the game switcher became a hard reset in [#4](https://github.com/josegonzalez/minui-nintendo-dsperate-pak/issues/4). The patch gives both tiers a destructor that calls their already idempotent `close()`. `Display` itself gets none, because the early returns call `SDL_Quit()` first. Reported upstream as [beebono/DSperate#21](https://github.com/beebono/DSperate/issues/21); drop it once upstream fixes it.
+**`0005-gcc8-lto-layout-fp-contract.patch`**: upstream compiles `src/frontend/video/layout.cpp` with `-ffp-contract=off`, so screen placement, which is float arithmetic truncated to pixels, lands on the same pixel everywhere. `ctest`'s `layout` test pins it with a hash over a sweep of layouts. With LTO on, GCC 8 loses that per-file option once the layout functions are inlined into callers compiled without it, and the `dominant_v` layout puts its second screen a pixel lower in 13 of 3942 sweep cases. That affects the shipping binary on tg5040 and h700, not just the test. Bisected the same way as `0002`:
+
+| Compiler | Build | `layout` |
+| --- | --- | --- |
+| GCC 8.3.0 | `layout.cpp` off, the rest LTO-linked without it | FAIL |
+| GCC 8.3.0 | the same, with `-ffp-contract=off` on the link too | FAIL |
+| GCC 8.3.0 | `layout.cpp` built with `-fno-lto` | pass |
+| GCC 10.3.0 | `layout.cpp` off, the rest LTO-linked without it | pass |
+
+The patch builds `layout.cpp` outside LTO on GCC 8 only. Placement runs only when the layout or the output size changes, never per frame, so nothing is lost by not inlining it.
 
 ## Tests
 
 `make test-native` builds the upstream suite in its own `build/ctest` directory with `-DDSPERATE_TESTS=ON`, so the three shipping builds keep `-DDSPERATE_TESTS=OFF` and never carry test binaries.
 
 It runs once, with the tg5040 flag set. All three platforms build identical source with identical options and only `-mcpu`/`-mtune` differ, which changes scheduling and not semantics; using the cortex-a53 build keeps the tested binary a strict ARMv8-A baseline. CI runs on `ubuntu-24.04-arm`, so the container is native arm64 and the cross-built binaries execute directly — no `qemu-aarch64-static`.
+
+The ctest build also links `-lstdc++fs`. The test executables use `std::filesystem` through the core, which GCC 8 keeps in a separate library, and upstream only links it into `dsperate` itself. GCC 10 still ships the library, so it needs no compiler check.
 
 `input` is excluded. It links SDL2, the only libSDL2 in the container is the sysroot's, and putting that on `LD_LIBRARY_PATH` drags its glibc in front of the container's loader: `undefined symbol: __libc_vfork, version GLIBC_PRIVATE`. Nothing to do with the code. `RUN_CTEST=0` skips the suite entirely, `CTEST_EXCLUDE` adjusts the filter.
 
@@ -170,6 +189,9 @@ hidden default, and 9 is the sleep autosave, which maps onto DSperate's own `.au
 minarch means the sleep path writes no thumbnail and no marker — the switcher resolves its picture
 through the marker, which only ever holds 0-7.
 
+Deleting a slot from DSperate's pause menu also deletes its thumbnail, and the marker when it names
+that slot, so the switcher stops offering a resume with nothing behind it.
+
 Thumbnails are written with DSperate's own `write_png()`, at the `.bmp` path the launcher looks
 for. That is not a mismatch: NextUI writes PNG bytes into that same name (`ma_menu.c:1604`,
 `IMG_SavePNG_RW`) and MinUI writes a real BMP (`minarch.c:4148`), and both read with `IMG_Load`,
@@ -192,4 +214,5 @@ The per-model bodies only matter for pre-rc11 builds and can go once those are n
 - **rg28xx rotation is unverified.** Its panel is mounted portrait and NextUI exports `SDL_ROTATION=1` so applications see 640x480 landscape, but DSperate's fbdev tier writes `/dev/fb0` directly and never goes through SDL, so that rotation does not reach it. `config/platform.sh` sets `DS_ROTATE=270` for that device on that reasoning; it needs confirming on hardware.
 - **The display tier on TrimUI is unverified.** The A133P is Allwinner, so `/dev/disp` may answer and the display-engine tier — written and measured for the Miyoo A30 — could open first. `--no-disp` is the escape hatch and the `video:` log line says which tier actually opened.
 - **`:latest` toolchain images.** House convention, but a green build today can be red tomorrow with no repo change, and a toolchain glibc bump would trip the ABI gate. The gate firing is the desired behaviour; the per-platform `*_GLIBC_MAX` variables are the knob.
+- **`pad.face_fix` is left at upstream's `auto`, unverified.** Since v3.0.5 DSperate compares the SDL mapping with the kernel's `BTN_SOUTH`/`BTN_EAST` positions and swaps A/B or X/Y when they disagree. The mappings `config/platform.sh` exports are deliberately positional, so if a TrimUI or h700 kernel reports Nintendo-labelled codes this could undo them. Setting `face_fix = off` in the profiles is the fix if a device turns out to swap.
 - **Root-owned build output.** Everything under `src/`, `build/` and `dist/` is written as root by the containers, so `make clean` from an unprivileged account can fail. `make clean-docker` does the delete from inside a container.

@@ -15,7 +15,7 @@ PLATFORMS := tg5040 tg5050 h700
 # unknown -D cache args) and scripts/assert-build.sh is the only thing that
 # would catch it.
 DSPERATE_REPO := https://github.com/beebono/DSperate
-DSPERATE_TAG  := v1.15.1
+DSPERATE_TAG  := v3.0.5
 
 # ── Docker toolchain images ───────────────────────────────────────────────────
 TG5040_IMAGE := ghcr.io/loveretro/tg5040-toolchain:latest
@@ -34,7 +34,7 @@ H700_CPUFLAGS   := -mcpu=cortex-a53 -mtune=cortex-a53
 #
 # The ceiling is per platform because the toolchains genuinely differ: tg5040
 # and h700 are GCC 8.3.0 over a glibc 2.28 sysroot, while tg5050 is GCC 10.3.0
-# over glibc 2.33. Measured at v1.15.1: tg5040 and h700 come in at GLIBC_2.18,
+# over glibc 2.33. Measured at v3.0.5: tg5040 and h700 come in at GLIBC_2.18,
 # tg5050 at GLIBC_2.33.
 #
 # Each ceiling is the toolchain's own floor, not the device's, so it fails loudly
@@ -82,6 +82,11 @@ DOCKER_RUN_h700   := docker run --rm -v $(ROOT):/build $(H700_IMAGE)   $(DOCKER_
 # TESTS=OFF: test binaries must never reach dist. ctest gets its own build dir.
 # CHEEVOS=ON is safe: src/cheevos/cheevos_http.cpp declares curl's types itself
 #   and dlopens the library, so the sysroot needs no curl headers.
+# NET=ON builds netplay (vendored slirp and enet). It is upstream's default too,
+#   but spelled out so an upstream default change cannot flip it unnoticed.
+# VULKAN=OFF: none of these SoCs has Vulkan, and upstream enables the tier
+#   whenever the build host happens to have <vulkan/vulkan.h>, so leaving it to
+#   detection would make the binary depend on the container image.
 DSP_CMAKE_COMMON := \
 	-G Ninja \
 	-DCMAKE_BUILD_TYPE=Release \
@@ -92,6 +97,8 @@ DSP_CMAKE_COMMON := \
 	-DDSPERATE_HEADLESS=OFF \
 	-DDSPERATE_TESTS=OFF \
 	-DDSPERATE_CHEEVOS=ON \
+	-DDSPERATE_NET=ON \
+	-DDSPERATE_VULKAN=OFF \
 	-DDSPERATE_PGO=$(DSPERATE_PGO)
 
 # DSperate uses std::thread but never links Threads::Threads. Upstream never
@@ -101,6 +108,13 @@ DSP_CMAKE_COMMON := \
 # is appended at the very end of the link line, the one place it survives.
 # push-state/pop-state keeps --no-as-needed off everything else.
 DSP_PTHREAD_LIBS := -Wl,--push-state,--no-as-needed -lpthread -Wl,--pop-state
+
+# The test executables use std::filesystem through the core, and on GCC 8 that
+# lives in a separate libstdc++fs. Upstream links it into dsperate itself when
+# GCC < 9, but not into the tests. GCC 10 still ships the library, so this
+# needs no compiler check; it is ctest-only because the shipping binary
+# already gets it from upstream.
+DSP_CTEST_LIBS := $(DSP_PTHREAD_LIBS) -lstdc++fs
 
 .PHONY: all build clone verify-pin patch dist release bump-version push lint test test-native clean clean-docker
 
@@ -205,7 +219,7 @@ ifeq ($(RUN_CTEST),1)
 	    -DCMAKE_C_FLAGS="-I$$CROSS_ROOT/include/ $(TG5040_CPUFLAGS) -pthread" \
 	    -DCMAKE_CXX_FLAGS="-I$$CROSS_ROOT/include/ $(TG5040_CPUFLAGS) -pthread" \
 	    -DCMAKE_EXE_LINKER_FLAGS="-static-libstdc++ -static-libgcc $$DSP_SDL_LDFLAGS" \
-	    -DCMAKE_CXX_STANDARD_LIBRARIES="$(DSP_PTHREAD_LIBS)"; \
+	    -DCMAKE_CXX_STANDARD_LIBRARIES="$(DSP_CTEST_LIBS)"; \
 	  cmake --build /build/build/ctest -- -j$$(nproc); \
 	  ctest --test-dir /build/build/ctest --output-on-failure --timeout 300 \
 	    $(if $(CTEST_EXCLUDE),-E "$(CTEST_EXCLUDE)",)'

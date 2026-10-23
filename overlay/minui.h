@@ -59,6 +59,9 @@ public:
   void write_auto_resume() const;    // survives a battery death; cleared on wake
   void clear_auto_resume() const;
   void write_slot_marker(int slot) const;
+  // A deleted slot: drops its thumbnail, and the marker too when it names that
+  // slot, so the switcher stops offering a resume that has nothing behind it.
+  void forget_slot(int slot) const;
   void write_game_switcher() const;
   // Empty when there is no MINUI_DIR, or when the slot is outside 0..MAX_SLOT.
   std::string slot_thumbnail_path(int slot) const;

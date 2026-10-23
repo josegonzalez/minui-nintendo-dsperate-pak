@@ -239,6 +239,19 @@ void MinUi::write_slot_marker(int slot) const {
   put_text(dir_ + "/" + rom_file_ + ".txt", std::to_string(slot));
 }
 
+void MinUi::forget_slot(int slot) const {
+  const std::string thumb = slot_thumbnail_path(slot);
+  if (thumb.empty()) return;
+  std::remove(thumb.c_str());
+  const std::string marker = dir_ + "/" + rom_file_ + ".txt";
+  FILE* f = std::fopen(marker.c_str(), "r");
+  if (!f) return;
+  char buf[16] = {};
+  const bool read = std::fgets(buf, sizeof buf, f) != nullptr;
+  std::fclose(f);
+  if (read && std::strtol(buf, nullptr, 10) == slot) std::remove(marker.c_str());
+}
+
 void MinUi::write_game_switcher() const {
   if (shared_dir_.empty()) return;
   // Only existence is read; the frontend writes the literal "unused" itself.
