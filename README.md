@@ -70,11 +70,18 @@ MENU acts as the modifier for every chord. Pressed and released on its own, it o
 - MENU + B: Screenshot
 - MENU + X: Toggle the FPS counter
 - MENU + L2: Swap which screen is the large one
+- MENU + START: Move the small screen of the pip layout to the next corner
 - MENU + R2: Toggle fast forward
-- MENU + SELECT: Save and return to the launcher's game switcher
+- MENU + SELECT: Save and open NextUI's game switcher, which shows the game's picture with A to resume it and B to go back to the game list. Stock MinUI has no game switcher, so there it saves and quits.
 - R2 (two-stick and one-stick devices): Hold for fast forward
 - L2: Tap the stylus at the pen's position
 - R2 (no-stick devices): Hold to move the pen with the d-pad
+
+Changing the layout, swapping the screens or moving the small screen shows the new setting's name at the top of the screen for a few seconds. The choice is remembered for that game.
+
+The pause menu's Options > Shortcuts page turns each MENU chord on or off, and can move all of them from MENU to another button. Save state (MENU + R1), load state (MENU + L1) and picking a state slot (MENU + Left / Right) are there too, and are off by default. Every chord is also in the `[padhotkeys]` section of `dsperate.ini`.
+
+Configs from earlier versions of this pak gain MENU + START on the next launch, and MENU + R1 / L1 and MENU + Left / Right are turned off unless your config already set them.
 
 ## Pause menu
 
@@ -83,7 +90,7 @@ The pause menu looks and works like the one every other system on the card uses:
 - Continue: Back to the game.
 - Save: Saves a state to the slot shown. Left and right pick one of eight slots, and the window beside the list shows what each one holds.
 - Load: Loads the state in the slot shown.
-- Options: Every setting DSperate has, as lists: Emulation, Visual FX, Layout, Controls and DS Options, then Cheats and Achievements when the game has them, Manage Save Slots to delete states, Save Changes to choose whether changes apply to every game or only this one, and Reset Game.
+- Options: Every setting DSperate has, as lists: Emulation, Visual FX, Layout, Controls, Shortcuts and DS Options, then Cheats and Achievements when the game has them, Manage Save Slots to delete states, Save Changes to choose whether changes apply to every game or only this one, and Reset Game.
 - Quit: Returns to the launcher.
 
 On NextUI the menu follows the theme colours and font chosen in NextUI's settings. On MinUI it uses MinUI's own look.
@@ -129,6 +136,8 @@ These lines in that log are worth knowing:
 - `resume state <path> not found, falling back to autoload` means RESUME in the game switcher asked for a save state slot that no longer exists, so the game started from its last autosave instead.
 - `resume state <path> predates this DSperate (format N, needs M), falling back to autoload` means the slot RESUME asked for was saved by an older DSperate that wrote a format this one cannot read, so the game started from its last autosave instead.
 - `state: no state in slot` or `state: cannot load ...` means DSperate refused the state RESUME asked for. The pak exits back to the launcher rather than starting the game from a state it cannot read.
+
+To find the numbers of buttons the pak does not use yet, such as the Brick's F1 and F2, create an empty `probe.txt` in `/.userdata/$PLATFORM/DSP-dsperate/` and launch a game. For the first 15 seconds, before the game appears, press each button once. Every press is written to the log as a `probe:` line, and `probe.txt` is removed so the next launch is a normal one.
 
 ## Development
 

@@ -56,6 +56,9 @@ dsp_init_env() {
     export MINUI_SHARED_DIR MINUI_DIR
     MINUI_ROM_FILE="$(basename "$ROM_PATH")"
     export MINUI_ROM_FILE
+    # The profile the config was seeded from, which the pause menu's
+    # Shortcuts page restores its defaults from.
+    export MINUI_PROFILE_INI="$PAK_DIR/configs/$PROFILE_INI.ini"
     # auto_resume.txt holds the path relative to the card, and the frontend
     # rebuilds it with a bare concat. An absolute path here becomes
     # /mnt/SDCARD/mnt/SDCARD/... and the resume silently never happens, so it
@@ -112,6 +115,21 @@ dsp_export_pad_mapping() {
 
     export SDL_GAMECONTROLLERCONFIG="$_guid,$_name,$_map,platform:Linux"
     echo "pad mapping: $_guid ($_name)"
+
+    # The controls this mapping names, so the pause menu only offers a
+    # modifier the pad can actually send.
+    MINUI_PAD_BUTTONS="$(echo "$_map" | sed -e 's/:[^,]*//g' -e 's/,/ /g')"
+    export MINUI_PAD_BUTTONS
+}
+
+# A one-off hunt for a device's spare buttons. With probe.txt beside
+# device.txt, every control pressed in the next 15 seconds is logged before
+# the game starts, and the trigger is used up.
+dsp_probe_buttons() {
+    [ -f "$DSP_USERDATA_DIR/probe.txt" ] || return 0
+    rm -f "$DSP_USERDATA_DIR/probe.txt"
+    echo "Probing the controls for 15 seconds"
+    "$BIN_DIR/dsp-pad-guid" --probe 15 || echo "dsp-pad-guid could not probe the controls"
 }
 
 # Seed once per profile so remapping done in DSperate's pause menu survives later
@@ -148,30 +166,77 @@ dsp_seed_config() {
     sync
 }
 
-# A bare MENU tap opens the pause menu, as it does in minarch. The shipped
-# profiles bind it, but a config seeded by an older pak never will be again,
-# so add the binding once. A pause.alt the player already has, including
-# "none" to turn the tap off, is left alone.
-dsp_migrate_config() {
-    [ -f "$DSP_CONFIG" ] || return 0
+# Prints what a key holds under [padhotkeys], and fails when it is not there.
+# One under [hotkeys] is the keyboard's and does not count.
+dsp_padhotkey_value() {
+    awk -v key="$1" '
+        /^[[:space:]]*\[/ { section = $0; gsub(/[[:space:]]/, "", section); next }
+        section != "[padhotkeys]" { next }
+        {
+            eq = index($0, "=")
+            if (!eq) next
+            k = substr($0, 1, eq - 1)
+            v = substr($0, eq + 1)
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", k)
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", v)
+            if (k == key) { found = 1; value = v }
+        }
+        END { if (found) print value; exit !found }
+    ' "$DSP_CONFIG"
+}
 
-    if awk '
-        /^[[:space:]]*\[/ { section = $0; gsub(/[[:space:]]/, "", section) }
-        section == "[padhotkeys]" && /^[[:space:]]*pause\.alt[[:space:]]*=/ { found = 1 }
+# Whether any [padhotkeys] key already holds this chord.
+dsp_padhotkey_taken() {
+    awk -v chord="$1" '
+        /^[[:space:]]*\[/ { section = $0; gsub(/[[:space:]]/, "", section); next }
+        section != "[padhotkeys]" { next }
+        {
+            eq = index($0, "=")
+            if (!eq) next
+            v = substr($0, eq + 1)
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", v)
+            if (v == chord) found = 1
+        }
         END { exit !found }
-    ' "$DSP_CONFIG"; then
+    ' "$DSP_CONFIG"
+}
+
+# Adds a key under [padhotkeys] once. A key the player already has there,
+# "none" included, is left alone.
+dsp_add_padhotkey() {
+    if dsp_padhotkey_value "$1" >/dev/null; then
         return 0
     fi
 
-    echo "Binding a MENU tap to the pause menu in $DSP_CONFIG"
+    echo "Adding $1 = $2 under [padhotkeys] in $DSP_CONFIG"
     if grep -q '^[[:space:]]*\[padhotkeys\][[:space:]]*$' "$DSP_CONFIG"; then
-        awk '
+        awk -v line="$1 = $2" '
             { print }
-            !done && /^[[:space:]]*\[padhotkeys\][[:space:]]*$/ { print "pause.alt = mod"; done = 1 }
+            !done && /^[[:space:]]*\[padhotkeys\][[:space:]]*$/ { print line; done = 1 }
         ' "$DSP_CONFIG" >"$DSP_CONFIG.tmp" && mv -f "$DSP_CONFIG.tmp" "$DSP_CONFIG"
     else
-        printf '\n[padhotkeys]\npause.alt = mod\n' >>"$DSP_CONFIG"
+        printf '\n[padhotkeys]\n%s = %s\n' "$1" "$2" >>"$DSP_CONFIG"
     fi
+}
+
+# The profiles are seeded once, so a config from an older pak gains what the
+# profiles have since added, once:
+#   - a bare MENU tap opens the pause menu, as it does in minarch;
+#   - MENU+START moves the pip screen, unless MENU+START is already taken,
+#     which a config with no pause line counts as, upstream's pause being
+#     mod+start;
+#   - the state and slot chords are off, as they ship now.
+# Anything the player set for these keys themselves is left alone.
+dsp_migrate_config() {
+    [ -f "$DSP_CONFIG" ] || return 0
+
+    dsp_add_padhotkey pause.alt mod
+    if dsp_padhotkey_value pause >/dev/null && ! dsp_padhotkey_taken mod+start; then
+        dsp_add_padhotkey pip_corner_next mod+start
+    fi
+    for _key in save_state load_state slot_next slot_prev; do
+        dsp_add_padhotkey "$_key" none
+    done
 }
 
 # The pause menu dresses itself as the launcher that started it. NextUI keeps
@@ -346,6 +411,7 @@ main() {
     dsp_migrate_config
     dsp_detect_style
     dsp_export_pad_mapping
+    dsp_probe_buttons
 
     # Only on a panel whose rotation SDL cannot tell DSperate about; the fbdev
     # tier writes /dev/fb0 directly. Empty everywhere else.

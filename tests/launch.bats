@@ -484,3 +484,94 @@ fake_nextui() {
     dsp_migrate_config
     [ ! -f "$DSP_CONFIG" ]
 }
+
+@test "every profile already has what migration adds" {
+    for profile in no-sticks one-stick two-sticks; do
+        rm -f "$DSP_DEVICE_FILE"
+        PROFILE_INI="$profile"
+        dsp_seed_config
+        cp "$DSP_CONFIG" "$BATS_TEST_TMPDIR/seeded.ini"
+        dsp_migrate_config
+        cmp -s "$DSP_CONFIG" "$BATS_TEST_TMPDIR/seeded.ini"
+    done
+}
+
+@test "an older config gains MENU+START and loses the state chords, once" {
+    printf '[padhotkeys]\npause = mod+y\npause.alt = mod\n\n[cheevos]\nenabled = true\n' >"$DSP_CONFIG"
+    dsp_migrate_config
+    dsp_migrate_config
+    section="$(sed -n '/^\[padhotkeys\]/,/^\[cheevos\]/p' "$DSP_CONFIG")"
+    [ "$(echo "$section" | grep -c '^pip_corner_next = mod+start$')" -eq 1 ]
+    for key in save_state load_state slot_next slot_prev; do
+        [ "$(echo "$section" | grep -c "^$key = none$")" -eq 1 ]
+    done
+}
+
+@test "a player's own state and pip chords are kept" {
+    printf '[padhotkeys]\npause = mod+y\nsave_state = mod+rightshoulder\nslot_next = none\npip_corner_next = mod+x\n' >"$DSP_CONFIG"
+    dsp_migrate_config
+    grep -q '^save_state = mod+rightshoulder$' "$DSP_CONFIG"
+    [ "$(grep -c '^slot_next' "$DSP_CONFIG")" -eq 1 ]
+    grep -q '^pip_corner_next = mod+x$' "$DSP_CONFIG"
+    ! grep -q '^pip_corner_next = mod+start$' "$DSP_CONFIG"
+    grep -q '^load_state = none$' "$DSP_CONFIG"
+}
+
+@test "MENU+START is not added where it is already taken" {
+    printf '[padhotkeys]\npause = mod+y\nscreenshot = mod+start\n' >"$DSP_CONFIG"
+    dsp_migrate_config
+    ! grep -q '^pip_corner_next' "$DSP_CONFIG"
+}
+
+@test "with no pause line, upstream's MENU+START pause keeps it" {
+    printf '[padhotkeys]\nquit = mod+a\n' >"$DSP_CONFIG"
+    dsp_migrate_config
+    ! grep -q '^pip_corner_next' "$DSP_CONFIG"
+    grep -q '^save_state = none$' "$DSP_CONFIG"
+}
+
+@test "the pause menu is told the profile it restores shortcuts from" {
+    [ "$MINUI_PROFILE_INI" = "$PAK_DIR/configs/no-sticks.ini" ]
+    [ -f "$MINUI_PROFILE_INI" ]
+}
+
+@test "the pause menu is told which controls the pad mapping names" {
+    stub_pad_guid "030000004c050000c405000011010000" "Fake Pad"
+    dsp_export_pad_mapping
+    [ "$MINUI_PAD_BUTTONS" = "a b x y back guide start leftshoulder rightshoulder lefttrigger righttrigger dpup dpdown dpleft dpright" ]
+}
+
+@test "every mapping body yields its names and no numbers" {
+    for map in "$DSP_MAP_TRIMUI" "$DSP_MAP_TRIMUI_NOSTICK" "$DSP_MAP_H700_STICKS" "$DSP_MAP_H700_LSTICK" "$DSP_MAP_H700_NOSTICK"; do
+        PROFILE_MAP="$map"
+        stub_pad_guid "030000004c050000c405000011010000" "Fake Pad"
+        dsp_export_pad_mapping
+        case " $MINUI_PAD_BUTTONS " in
+        *" guide "*) ;;
+        *) return 1 ;;
+        esac
+        case "$MINUI_PAD_BUTTONS" in
+        *:* | *,* | *[0-9].*) return 1 ;;
+        esac
+    done
+}
+
+@test "probe.txt runs the probe once, and nothing runs without it" {
+    printf '#!/bin/sh\necho "$@" >>"%s"\n' "$BATS_TEST_TMPDIR/probe.log" >"$PAK_DIR/$PLATFORM/dsp-pad-guid"
+    chmod +x "$PAK_DIR/$PLATFORM/dsp-pad-guid"
+    dsp_probe_buttons
+    [ ! -f "$BATS_TEST_TMPDIR/probe.log" ]
+    touch "$DSP_USERDATA_DIR/probe.txt"
+    dsp_probe_buttons
+    dsp_probe_buttons
+    [ "$(cat "$BATS_TEST_TMPDIR/probe.log")" = "--probe 15" ]
+    [ ! -f "$DSP_USERDATA_DIR/probe.txt" ]
+}
+
+@test "a probe that fails does not stop the launch" {
+    printf '#!/bin/sh\nexit 1\n' >"$PAK_DIR/$PLATFORM/dsp-pad-guid"
+    chmod +x "$PAK_DIR/$PLATFORM/dsp-pad-guid"
+    touch "$DSP_USERDATA_DIR/probe.txt"
+    run dsp_probe_buttons
+    [ "$status" -eq 0 ]
+}

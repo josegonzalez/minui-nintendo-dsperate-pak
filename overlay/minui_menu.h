@@ -46,7 +46,10 @@ public:
   // The slots that can hold a state at all: the slot hotkeys step 0..9.
   static constexpr int kSlots = 10;
 
-  enum class Page : u8 { Root, Options, Settings, Controls, Cheats, CheevosAccount, Cheevos, TextEdit, Slots };
+  enum class Page : u8 { Root, Options, Settings, Controls, Cheats, CheevosAccount, Cheevos, TextEdit, Slots, Shortcuts };
+
+  // How long a notice (notify()) stays, then how long it takes to fade out.
+  static constexpr u32 kNoticeHoldMs = 3000, kNoticeFadeMs = 500;
 
   // Active when the launcher set MINUI_DIR, the same test MinUi::active()
   // makes. The look comes from the MINUI_* environment launch.sh exports.
@@ -90,7 +93,24 @@ public:
   // use it; the frontend never needs to.
   void set_theme(const minui_gfx::Theme& theme);
   void set_battery_root(const std::string& root) { battery_root_ = root; }
+  // The device profile the Shortcuts page restores its defaults from, and
+  // the buttons the exported pad mapping names. launch.sh exports both
+  // (MINUI_PROFILE_INI, MINUI_PAD_BUTTONS); tests set them here.
+  void set_profile(const std::string& path) { profile_ = path; }
+  void set_pad_buttons(const std::vector<std::string>& names) { pad_buttons_ = names; }
   bool active() const { return active_; }
+
+  // A pill at the top of the game naming what a hotkey just changed, held
+  // for kNoticeHoldMs and faded over kNoticeFadeMs. `now_ms` is wall time
+  // (SDL_GetTicks), so fast forward does not cut it short. Nothing when no
+  // launcher is driving the menu, which keeps a desktop build upstream's.
+  void notify(const std::string& text, u32 now_ms);
+  bool notice_on(u32 now_ms) const;
+  // What it covered, for the tiers that must repaint it once it is gone.
+  Rect draw_notice(const Canvas& d, u32 now_ms) const;
+  // "LAYOUT: DOMINANT V": the row's label and the value's own label, from
+  // the settings tables the Layout page shows, or the raw value.
+  static std::string setting_notice(const char* key, const std::string& value);
   // Where the player is, for tests.
   Page page() const { return stack_[depth_ - 1]; }
 
@@ -101,7 +121,9 @@ private:
     enum Kind : u8 { Item, Heading, Note } kind = Item;
     bool enabled = true;
   };
-  enum class Opt : u8 { Emulation, VisualFx, Layout, Controls, DsOptions, Cheats, Achievements, Slots, SaveChanges, Reset };
+  enum class Opt : u8 { Emulation, VisualFx, Layout, Controls, DsOptions, Cheats, Achievements, Slots, SaveChanges, Reset, Shortcuts };
+  // A Shortcuts row's state, from what [padhotkeys] holds.
+  enum class ShortcutState : u8 { On, Off, Custom, Unavailable };
   enum class RootItem : u8 { Continue, Save, Load, Options, Quit };
   enum class AccountRow : u8 { SignIn, SignOut, List, Toasts, Screenshot, Encore };
   enum class EditDest : u8 { Setting, CheevosUser, CheevosPassword };
@@ -127,7 +149,19 @@ private:
   Result handle_cheevos(u32 presses);
   Result handle_text_edit(u32 presses);
   Result handle_slots(u32 presses);
+  Result handle_shortcuts(u32 presses);
   void open_option(Opt o);
+  // The Shortcuts page: row 0 is the modifier, then one row per entry of
+  // minui_shortcuts::kShortcuts.
+  std::string modifier() const;
+  std::vector<std::string> modifier_choices() const;
+  std::string modifier_label(const std::string& name) const;
+  std::string shortcut_value(int i) const;
+  ShortcutState shortcut_state(int i) const;
+  std::string chord_label(int i) const;
+  void step_modifier(int dir);
+  void toggle_shortcut(int i);
+  void restore_shortcuts();
   void step_setting(int dir);
   void build_lines();
   void move_cheat_row(int delta);
@@ -152,6 +186,7 @@ private:
   void draw_account(minui_gfx::Painter& p, const minui_gfx::Metrics& m) const;
   void draw_cheevos(minui_gfx::Painter& p, const minui_gfx::Metrics& m) const;
   void draw_slots(minui_gfx::Painter& p, const minui_gfx::Metrics& m) const;
+  void draw_shortcuts(minui_gfx::Painter& p, const minui_gfx::Metrics& m) const;
   // The pill at the top left, no wider than `max_w`. Returns where it ends.
   int  draw_title(minui_gfx::Painter& p, const minui_gfx::Metrics& m, const std::string& text, int max_w) const;
   // The battery pill at the top right. Returns its width, 0 with no battery.
@@ -218,6 +253,16 @@ private:
   mutable int slots_top_ = 0;
   bool slots_armed_ = false;
   int  doomed_ = 0;
+
+  int  short_row_ = 0;         // 0 the modifier, then kShortcuts
+  mutable int short_top_ = 0;
+  bool short_armed_ = false;   // Defaults, waiting for its second press
+  bool short_refused_ = false; // the last way into the menu was nearly turned off
+  std::string profile_;
+  std::vector<std::string> pad_buttons_;
+
+  std::string toast_;          // the notice, and when it went up
+  u32  toast_ms_ = 0;
 
   static constexpr u32 kRepeatDelayMs = 400, kRepeatRateMs = 55;
   int  repeat_dir_ = 0;

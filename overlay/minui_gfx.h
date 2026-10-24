@@ -75,6 +75,10 @@ public:
   const Canvas& canvas() const { return c_; }
   void set_clip(const Clip& k) { clip_ = k; }
   const Clip& clip() const { return clip_; }
+  // Scales everything drawn after it, text included, so a whole pill can
+  // fade out. 255 is opaque. clear() ignores it: it is a copy, not a blend.
+  void set_alpha(u32 a) { alpha_ = a > 255 ? 255 : a; }
+  u32 alpha() const { return alpha_; }
 
   // Blends `colour` scaled by `cover` (0..255) at one pixel.
   void plot(int x, int y, u32 colour, u32 cover = 255);
@@ -91,6 +95,7 @@ private:
   bool inside(int x, int y) const;
   Canvas c_;
   Clip clip_;
+  u32 alpha_ = 255;
 };
 
 // A TrueType or CFF font at any pixel size, with the 5x7 bitmap font as the

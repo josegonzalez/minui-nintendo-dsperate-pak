@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <map>
 #include <string>
 #include <sys/stat.h>
 #include <vector>
@@ -31,7 +32,10 @@ using B = ds::io::Io::Button;
 namespace {
 
 struct Host final : ds::sdl::SettingsHost {
-  std::string get(const char*) const override { return ""; }
+  std::string get(const char* key) const override {
+    const auto it = kHot.find(key);
+    return it == kHot.end() ? "" : it->second;
+  }
   void set(const char*, const std::string&) override {}
   bool enabled(const ds::sdl::Setting&) const override { return true; }
   const char* disabled_reason(const ds::sdl::Setting&) const override { return ""; }
@@ -59,6 +63,15 @@ struct Host final : ds::sdl::SettingsHost {
     {"A", "b"}, {"B", "a"}, {"X", "y"}, {"Y", "x"}, {"L", "leftshoulder"}, {"R", "rightshoulder"},
     {"START", "start"}, {"SELECT", "back"}, {"UP", "dpup"}, {"DOWN", "dpdown"}, {"LEFT", "dpleft"},
     {"RIGHT", "dpright"}, {"QUIT", "mod+a"}, {"PAUSE", "mod+y"}, {"FAST FORWARD", "+righttrigger"},
+  };
+  // The shipped profiles' [padhotkeys], for the Shortcuts page.
+  const std::map<std::string, std::string> kHot = {
+    {"padhotkeys.quit", "mod+a"}, {"padhotkeys.pause", "mod+y"}, {"padhotkeys.pause.alt", "mod"},
+    {"padhotkeys.fast_forward_toggle", "mod++righttrigger"}, {"padhotkeys.layout_next", "mod+dpup"},
+    {"padhotkeys.layout_prev", "mod+dpdown"}, {"padhotkeys.screen_swap", "mod++lefttrigger"},
+    {"padhotkeys.screenshot", "mod+b"}, {"padhotkeys.fps", "mod+x"}, {"padhotkeys.game_switcher", "mod+back"},
+    {"padhotkeys.pip_corner_next", "mod+start"}, {"padhotkeys.save_state", "none"},
+    {"padhotkeys.load_state", "none"}, {"padhotkeys.slot_next", "none"}, {"padhotkeys.slot_prev", "none"},
   };
 };
 
@@ -211,8 +224,8 @@ int main(int argc, char** argv) {
         ++written;
       };
       // Walks from the root: Continue, Save, Load, Options, Quit; Options is
-      // Emulation, Visual FX, Layout, Controls, DS Options, Cheats,
-      // Achievements, Manage Save Slots, Save Changes, Reset Game.
+      // Emulation, Visual FX, Layout, Controls, Shortcuts, DS Options,
+      // Cheats, Achievements, Manage Save Slots, Save Changes, Reset Game.
       const auto options_row = [&](int row) {
         m.set_slot(1);
         m.set_open(true);
@@ -232,23 +245,36 @@ int main(int argc, char** argv) {
       options_row(0);
       shot("options");
       const struct { int row; const char* scene; } pages[] = {
-        {0, "emulation"}, {1, "visual-fx"}, {2, "layout"}, {3, "controls"}, {4, "ds-options"},
-        {5, "cheats"}, {6, "achievements"}, {7, "manage-save-slots"},
+        {0, "emulation"}, {1, "visual-fx"}, {2, "layout"}, {3, "controls"}, {4, "shortcuts"},
+        {5, "ds-options"}, {6, "cheats"}, {7, "achievements"}, {8, "manage-save-slots"},
       };
       for (const auto& p : pages) {
         options_row(p.row);
         m.input(press(B::BTN_A));
         shot(p.scene);
       }
-      options_row(6);
+      options_row(7);
       m.input(press(B::BTN_A));
       m.input(press(B::BTN_DOWN));
       m.input(press(B::BTN_A));
       shot("achievement-list");
-      options_row(4);
+      options_row(5);
       m.input(press(B::BTN_A));
       m.input(press(B::BTN_A));
       shot("name-editor");
+
+      // The notice a layout hotkey raises, over the undimmed game: as it
+      // holds, and half way through its fade.
+      m.set_open(false);
+      m.notify(MinUiMenu::setting_notice("video.layout", "dominant_v"), 0);
+      for (const auto& n : {std::make_pair(0u, "notice"),
+                            std::make_pair(MinUiMenu::kNoticeHoldMs + MinUiMenu::kNoticeFadeMs / 2, "notice-fading")}) {
+        game_frame(px, w, h);
+        m.draw_notice(canvas, n.first);
+        const std::string path = out + "/" + look.name + "-" + std::to_string(w) + "x" + std::to_string(h) + "-" + n.second + ".png";
+        if (!save_png(px, w, h, path)) { std::fprintf(stderr, "cannot write %s\n", path.c_str()); std::exit(1); }
+        ++written;
+      }
     }
   }
   std::printf("render-menu: %d screenshots in %s\n", written, out.c_str());

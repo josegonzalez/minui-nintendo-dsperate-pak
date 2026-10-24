@@ -1,17 +1,22 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Vendored by minui-nintendo-dsperate-pak. See minui_menu.h.
 #include "minui_menu.h"
+#include "minui_shortcuts.h"
 #include "core/io/io.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
+#include <sstream>
 #include <sys/stat.h>
 
 namespace ds::sdl {
 
 using namespace minui_gfx;
+using namespace minui_shortcuts;
 using B = io::Io::Button;
 
 namespace {
@@ -60,6 +65,54 @@ void fill_triangle(Painter& p, double x0, double y0, double x1, double y1, doubl
     }
 }
 
+std::string trim(const std::string& s) {
+  size_t a = 0, b = s.size();
+  while (a < b && std::isspace(static_cast<unsigned char>(s[a]))) ++a;
+  while (b > a && std::isspace(static_cast<unsigned char>(s[b - 1]))) --b;
+  return s.substr(a, b - a);
+}
+
+// One [section] of an ini as key -> value. The profiles are the pak's own and
+// plain: no inline comments, no continuation lines.
+std::map<std::string, std::string> read_section(const std::string& path, const std::string& section) {
+  std::map<std::string, std::string> out;
+  std::ifstream f(path);
+  if (!f) return out;
+  bool in = false;
+  for (std::string line; std::getline(f, line);) {
+    line = trim(line);
+    if (line.empty() || line[0] == '#' || line[0] == ';') continue;
+    if (line[0] == '[') { in = line == "[" + section + "]"; continue; }
+    const size_t eq = line.find('=');
+    if (!in || eq == std::string::npos) continue;
+    out[trim(line.substr(0, eq))] = trim(line.substr(eq + 1));
+  }
+  return out;
+}
+
+std::vector<std::string> words(const char* s) {
+  std::vector<std::string> out;
+  std::istringstream in(s ? s : "");
+  for (std::string w; in >> w;) out.push_back(w);
+  return out;
+}
+
+// The control a chord holds with the modifier: "mod++lefttrigger" is
+// "lefttrigger". Empty for the modifier's tap, which holds nothing else.
+std::string chord_button(const char* chord) {
+  std::string s = chord;
+  if (s.compare(0, 4, "mod+") != 0) return {};
+  s.erase(0, 4);
+  if (!s.empty() && (s[0] == '+' || s[0] == '-')) s.erase(0, 1);
+  return s;
+}
+
+int shortcut_index(const char* key) {
+  for (int i = 0; i < kShortcutCount; ++i)
+    if (std::strcmp(kShortcuts[i].key, key) == 0) return i;
+  return -1;
+}
+
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -73,6 +126,8 @@ MinUiMenu::MinUiMenu() : MinUiMenu([] {
 MinUiMenu::MinUiMenu(bool active) : active_(active), font_(std::make_unique<Font>()) {
   if (!active_) return;
   set_theme(Theme::from_env());
+  if (const char* p = std::getenv("MINUI_PROFILE_INI")) profile_ = p;
+  pad_buttons_ = words(std::getenv("MINUI_PAD_BUTTONS"));
 }
 
 void MinUiMenu::set_theme(const Theme& theme) {
@@ -229,6 +284,8 @@ std::vector<MinUiMenu::Opt> MinUiMenu::options() const {
     v.push_back(Opt::VisualFx);
     v.push_back(Opt::Layout);
     v.push_back(Opt::Controls);
+    // The pak's chords are all on the pad.
+    if (host_->has_pad()) v.push_back(Opt::Shortcuts);
     v.push_back(Opt::DsOptions);
   }
   if (codes_ && !codes_->empty()) v.push_back(Opt::Cheats);
@@ -299,6 +356,7 @@ MinUiMenu::Result MinUiMenu::handle(u32 presses) {
   case Page::Cheevos:        return handle_cheevos(presses);
   case Page::TextEdit:       return handle_text_edit(presses);
   case Page::Slots:          return handle_slots(presses);
+  case Page::Shortcuts:      return handle_shortcuts(presses);
   }
   return Result::None;
 }
@@ -318,6 +376,7 @@ void MinUiMenu::move_list(int dir) {
     break;
   }
   case Page::Slots:    wrap(slots_row_, kAutoSlot + 1); slots_armed_ = false; break;
+  case Page::Shortcuts: wrap(short_row_, kShortcutCount + 1); short_armed_ = false; short_refused_ = false; break;
   case Page::TextEdit: break;
   }
 }
@@ -401,6 +460,13 @@ void MinUiMenu::open_option(Opt o) {
     slots_top_ = 0;
     slots_armed_ = false;
     push(Page::Slots);
+    break;
+  case Opt::Shortcuts:
+    short_row_ = 0;
+    short_top_ = 0;
+    short_armed_ = false;
+    short_refused_ = false;
+    push(Page::Shortcuts);
     break;
   case Opt::SaveChanges: case Opt::Reset:
     break;
@@ -693,6 +759,123 @@ MinUiMenu::Result MinUiMenu::handle_slots(u32 presses) {
   return Result::Delete;
 }
 
+// The pak's modifier chords, on and off, and the modifier they hang on. Every
+// change goes through SettingsHost::bind, as the Controls page's do, so it
+// lands where Save Changes says and the input is reconfigured at once.
+std::string MinUiMenu::modifier() const {
+  const std::string m = host_->get("padhotkeys.modifier");
+  return m.empty() ? kDefaultModifier : m;
+}
+
+// The candidates the pad mapping actually has, in kModifiers' order, and the
+// current modifier wherever it came from, so stepping never loses it.
+std::vector<std::string> MinUiMenu::modifier_choices() const {
+  const std::string cur = modifier();
+  std::vector<std::string> out;
+  bool known = false;
+  for (const Modifier& m : kModifiers) {
+    const bool mapped = std::find(pad_buttons_.begin(), pad_buttons_.end(), m.name) != pad_buttons_.end();
+    if (cur == m.name) known = true;
+    if (mapped || cur == m.name) out.push_back(m.name);
+  }
+  if (!known) out.insert(out.begin(), cur);
+  return out;
+}
+
+std::string MinUiMenu::modifier_label(const std::string& name) const {
+  for (const Modifier& m : kModifiers)
+    if (name == m.name) return m.label;
+  std::string up = name;
+  for (char& c : up) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+  return up;
+}
+
+// What the key holds, or what upstream runs with when it holds nothing.
+std::string MinUiMenu::shortcut_value(int i) const {
+  const Shortcut& s = kShortcuts[i];
+  const std::string v = host_->get((std::string("padhotkeys.") + s.key).c_str());
+  return v.empty() ? s.upstream : v;
+}
+
+MinUiMenu::ShortcutState MinUiMenu::shortcut_state(int i) const {
+  const Shortcut& s = kShortcuts[i];
+  // A chord on the modifier itself cannot be pressed: SELECT+SELECT.
+  const std::string button = chord_button(s.chord);
+  if (!button.empty() && button == modifier()) return ShortcutState::Unavailable;
+  const std::string v = shortcut_value(i);
+  if (v == "none") return ShortcutState::Off;
+  return v == s.chord ? ShortcutState::On : ShortcutState::Custom;
+}
+
+std::string MinUiMenu::chord_label(int i) const {
+  const std::string mod = modifier_label(modifier());
+  return *kShortcuts[i].button ? mod + "+" + kShortcuts[i].button : mod;
+}
+
+void MinUiMenu::step_modifier(int dir) {
+  const std::vector<std::string> choices = modifier_choices();
+  const int n = static_cast<int>(choices.size());
+  const int at = static_cast<int>(std::find(choices.begin(), choices.end(), modifier()) - choices.begin());
+  const std::string next = choices[static_cast<size_t>(((at + dir) % n + n) % n)];
+  if (next != modifier()) host_->bind("padhotkeys.modifier", next);
+}
+
+void MinUiMenu::toggle_shortcut(int i) {
+  const ShortcutState st = shortcut_state(i);
+  if (st == ShortcutState::Unavailable) return;
+  const Shortcut& s = kShortcuts[i];
+  const std::string key = std::string("padhotkeys.") + s.key;
+  if (st != ShortcutState::On) { host_->bind(key, s.chord); return; }
+  // The menu is the only way to turn these back on, so the last way into it
+  // stays: the tap and the chord cannot both be off.
+  const int pause = shortcut_index("pause"), tap = shortcut_index("pause.alt");
+  if (i == pause || i == tap) {
+    const ShortcutState other = shortcut_state(i == pause ? tap : pause);
+    if (other == ShortcutState::Off || other == ShortcutState::Unavailable) { short_refused_ = true; return; }
+  }
+  host_->bind(key, "none");
+}
+
+// The device's own: the profile launch.sh seeded the config from. A key the
+// profile leaves out, or no profile at all, is the chord.
+void MinUiMenu::restore_shortcuts() {
+  const std::map<std::string, std::string> shipped = read_section(profile_, "padhotkeys");
+  const auto it = shipped.find("modifier");
+  host_->bind("padhotkeys.modifier", it == shipped.end() ? kDefaultModifier : it->second);
+  for (const Shortcut& s : kShortcuts) {
+    const auto v = shipped.find(s.key);
+    host_->bind(std::string("padhotkeys.") + s.key, v == shipped.end() ? s.chord : v->second);
+  }
+}
+
+MinUiMenu::Result MinUiMenu::handle_shortcuts(u32 presses) {
+  const int n = kShortcutCount + 1;
+  short_row_ = std::clamp(short_row_, 0, n - 1);
+  // Defaults is the north button by position, as on the Controls page, so
+  // rebinding DS X cannot move it.
+  const bool reset = host_->has_pad() ? (faces_ >> 3) & 1 : hit(presses, B::BTN_X);
+  // Defaults rewrites every row, so it takes a second press, and any other
+  // press backs out and does only that.
+  if (short_armed_ && (presses || faces_)) {
+    short_armed_ = false;
+    if (reset) restore_shortcuts();
+    return Result::None;
+  }
+  if (presses || faces_) short_refused_ = false;
+  if (hit(presses, B::BTN_UP))   move_list(-1);
+  if (hit(presses, B::BTN_DOWN)) move_list(+1);
+  if (hit(presses, B::BTN_L))    short_row_ = std::max(0, short_row_ - std::max(1, visible_));
+  if (hit(presses, B::BTN_R))    short_row_ = std::min(n - 1, short_row_ + std::max(1, visible_));
+  const int dir = hit(presses, B::BTN_LEFT) ? -1 : hit(presses, B::BTN_RIGHT) || confirm(presses) ? 1 : 0;
+  if (dir != 0) {
+    if (short_row_ == 0) step_modifier(dir);
+    else toggle_shortcut(short_row_ - 1);
+  }
+  if (reset) short_armed_ = true;
+  if (hit(presses, B::BTN_B)) pop();
+  return Result::None;
+}
+
 // ---------------------------------------------------------------------------
 // Drawing
 
@@ -711,6 +894,7 @@ void MinUiMenu::draw(const Canvas& d) const {
   case Page::Cheevos:        draw_cheevos(p, m); break;
   case Page::TextEdit:       draw_text_edit(p, m); break;
   case Page::Slots:          draw_slots(p, m); break;
+  case Page::Shortcuts:      draw_shortcuts(p, m); break;
   }
 }
 
@@ -991,7 +1175,8 @@ void MinUiMenu::draw_list(Painter& p, const Metrics& m, const std::string& title
 
 void MinUiMenu::draw_options(Painter& p, const Metrics& m) const {
   static const char* const kNames[] = {"Emulation", "Visual FX", "Layout", "Controls", "DS Options",
-                                       "Cheats", "Achievements", "Manage Save Slots", "Save Changes", "Reset Game"};
+                                       "Cheats", "Achievements", "Manage Save Slots", "Save Changes", "Reset Game",
+                                       "Shortcuts"};
   const std::vector<Opt> opts = options();
   std::vector<Row> rows;
   for (Opt o : opts) {
@@ -1073,6 +1258,92 @@ void MinUiMenu::draw_controls(Painter& p, const Metrics& m) const {
   if (!clash.empty()) desc.push_back(clash[0]);
   else if (!listening) desc.push_back(host_->has_pad() ? "L/R: keyboard or pad" : "L/R: swap column");
   draw_list(p, m, bind_pad_ ? "Controls: Pad" : "Controls: Keyboard", rows, sel, bind_top_, desc);
+}
+
+void MinUiMenu::draw_shortcuts(Painter& p, const Metrics& m) const {
+  const int tiny = m.u(Metrics::FONT_TINY), w = p.canvas().w - m.u(m.padding * 2);
+  const std::string mod = modifier_label(modifier());
+  std::vector<Row> rows;
+  Row head;
+  head.label = "Modifier";
+  head.value = mod;
+  rows.push_back(head);
+  // Wide enough for any value a row can step to, so toggling never resizes the list.
+  int value_w = 0;
+  for (const std::string& c : modifier_choices()) value_w = std::max(value_w, font_->width(tiny, modifier_label(c)));
+  for (const char* v : {"OFF", "CUSTOM", "N/A"}) value_w = std::max(value_w, font_->width(tiny, v));
+  for (int i = 0; i < kShortcutCount; ++i) {
+    Row r;
+    r.label = kShortcuts[i].label;
+    switch (shortcut_state(i)) {
+    case ShortcutState::On:          r.value = chord_label(i); break;
+    case ShortcutState::Off:         r.value = "OFF"; break;
+    case ShortcutState::Custom:      r.value = "CUSTOM"; break;
+    case ShortcutState::Unavailable: r.value = "N/A"; r.enabled = false; break;
+    }
+    value_w = std::max(value_w, font_->width(tiny, chord_label(i)));
+    rows.push_back(r);
+  }
+  const int sel = std::clamp(short_row_, 0, kShortcutCount);
+  std::vector<std::string> desc;
+  if (short_armed_) desc.push_back("X again restores this device's shortcuts");
+  else if (short_refused_) desc = wrap(tiny, "The tap or Pause menu must stay on: nothing else opens this menu.", w, 2);
+  else if (sel == 0) {
+    bool ds = false;
+    for (const Modifier& k : kModifiers) if (modifier() == k.name) ds = k.ds_button;
+    desc = wrap(tiny, ds ? mod + " is a DS button too: the game only gets it as a tap, and not while a tap opens this menu."
+                         : "Held with a second button for every shortcut below.", w, 2);
+  } else {
+    const int i = sel - 1;
+    const ShortcutState st = shortcut_state(i);
+    if (st == ShortcutState::Unavailable) desc.push_back(mod + " is the modifier, so this cannot be held with it");
+    else if (st == ShortcutState::Custom) desc.push_back("Bound on the Controls page. A sets " + chord_label(i));
+    else desc.push_back("A Toggle   X Defaults");
+  }
+  const std::vector<std::string> clash = host_->collisions();
+  if (!clash.empty()) desc.push_back(clash[0]);
+  draw_list(p, m, "Shortcuts", rows, sel, short_top_, desc, value_w);
+}
+
+// ---------------------------------------------------------------------------
+// The notice
+
+void MinUiMenu::notify(const std::string& text, u32 now_ms) {
+  if (!active_) return;
+  toast_ = text;
+  toast_ms_ = now_ms;
+}
+
+bool MinUiMenu::notice_on(u32 now_ms) const {
+  return active_ && !toast_.empty() && now_ms - toast_ms_ < kNoticeHoldMs + kNoticeFadeMs;
+}
+
+Rect MinUiMenu::draw_notice(const Canvas& d, u32 now_ms) const {
+  if (!notice_on(now_ms) || d.w <= 0 || d.h <= 0 || !d.px) return {};
+  const u32 age = now_ms - toast_ms_;
+  const u32 alpha = age <= kNoticeHoldMs ? 255 : 255 * (kNoticeHoldMs + kNoticeFadeMs - age) / kNoticeFadeMs;
+  Painter p(d);
+  p.set_alpha(alpha);
+  const Metrics m = Metrics::for_canvas(d.w, d.h);
+  const int px = m.u(Metrics::FONT_LARGE), bp = m.u(Metrics::BUTTON_PADDING), h = m.u(Metrics::PILL_SIZE);
+  const int max_w = d.w - m.u(m.padding * 2);
+  if (max_w <= 2 * bp) return {};
+  // The title pill's look, centred at the top: clear of upstream's slot
+  // label in the top left corner and its FPS counter in the top right.
+  const std::string shown = font_->fit(px, toast_, max_w - 2 * bp);
+  const int w = std::min(max_w, font_->width(px, shown) + 2 * bp);
+  const int x = (d.w - w) / 2, y = m.u(m.padding);
+  p.pill(x, y, w, h, theme_.title_pill());
+  font_->draw(p, x + bp, y + (h - font_->line_height(px)) / 2, px, theme_.title_text(), shown);
+  const int x0 = std::max(0, x), y0 = std::max(0, y);
+  return Rect{x0, y0, std::min(d.w, x + w) - x0, std::min(d.h, y + h) - y0};
+}
+
+std::string MinUiMenu::setting_notice(const char* key, const std::string& value) {
+  for (const Setting* t : {kEmuSettings, kVideoSettings, kLayoutSettings, kUserSettings})
+    for (int i = 0, n = settings_count(t); i < n; ++i)
+      if (std::strcmp(t[i].key, key) == 0) return std::string(t[i].label) + ": " + display_value(t[i], value);
+  return value;
 }
 
 void MinUiMenu::draw_cheats(Painter& p, const Metrics& m) const {
