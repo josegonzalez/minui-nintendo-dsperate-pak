@@ -76,7 +76,7 @@ CROSS   := aarch64-nextui-linux-gnu-
 # The vendored MinUI sources the clone rule copies into src/frontend/sdl/, and
 # the ctest suite it copies into tests/. stb_*.h are nothings/stb, unmodified.
 MINUI_OVERLAY := minui.h minui.cpp minui_gfx.h minui_gfx.cpp minui_menu.h minui_menu.cpp \
-	minui_stb.cpp stb_image.h stb_truetype.h
+	minui_pad.h minui_shortcuts.h minui_stb.cpp stb_image.h stb_truetype.h
 MINUI_OVERLAY_TESTS := minui_menu_test.cpp
 
 DOCKER_SCRIPT := /build/scripts/docker-env.sh
@@ -361,7 +361,7 @@ push: release
 lint:
 	shellcheck -s sh launch.sh config/platform.sh
 	shellcheck -s bash scripts/*.sh
-	shfmt -l -d -i 4 launch.sh config/platform.sh scripts/*.sh
+	shfmt -l -d -i 4 launch.sh config/platform.sh scripts/*.sh tests/*.bash
 
 test:
 	bats tests/

@@ -64,17 +64,32 @@ Delete `device.txt` to have the profile applied again. Your previous config is k
 MENU acts as the modifier for every chord. Pressed and released on its own, it opens the pause menu.
 
 - MENU: Pause menu, and MENU or B again to close it
-- MENU + A: Quit
-- MENU + Y: Pause menu
-- MENU + Up / Down: Cycle screen layout
-- MENU + B: Screenshot
-- MENU + X: Toggle the FPS counter
 - MENU + L2: Swap which screen is the large one
-- MENU + R2: Toggle fast forward
-- MENU + SELECT: Save and return to the launcher's game switcher
+- MENU + START: Move the small screen of the pip layout to the next corner
+- MENU + SELECT: Save and open NextUI's game switcher, which shows the game's picture with A to resume it and B to go back to the game list. Stock MinUI has no game switcher, so there it saves and quits.
 - R2 (two-stick and one-stick devices): Hold for fast forward
 - L2: Tap the stylus at the pen's position
 - R2 (no-stick devices): Hold to move the pen with the d-pad
+
+Swapping the screens or moving the small screen shows the new setting's name at the top of the screen for a few seconds. The choice is remembered for that game.
+
+The pause menu's Options > Shortcuts page changes any of these the way NextUI's does: press A on a row, then press a button. Holding MENU while pressing it makes a MENU + button chord. X clears the row, and Y twice puts back the defaults for your device. The page can also move every chord from MENU to another button. These are there too, and are off by default:
+
+- Pause menu as a chord
+- Quit
+- Next and previous screen layout, which also show the layout's name at the top of the screen
+- FPS counter
+- Fast forward toggle
+- Screenshot
+- Save state, load state and the state slot
+- Hold to blow into the mic
+- Close or open the lid
+
+The Brick's F1 and F2 can also be bound on the Shortcuts page, or picked as the modifier instead of MENU.
+
+Every chord is also in the `[padhotkeys]` section of `dsperate.ini`.
+
+Configs from earlier versions of this pak gain MENU + START on the next launch, and MENU + R1 / L1, MENU + Left / Right and L3's mic blow are turned off unless your config already set them. Every other chord they had stays as it was.
 
 ## Pause menu
 
@@ -83,8 +98,8 @@ The pause menu looks and works like the one every other system on the card uses:
 - Continue: Back to the game.
 - Save: Saves a state to the slot shown. Left and right pick one of eight slots, and the window beside the list shows what each one holds.
 - Load: Loads the state in the slot shown.
-- Options: Every setting DSperate has, as lists: Emulation, Visual FX, Layout, Controls and DS Options, then Cheats and Achievements when the game has them, Manage Save Slots to delete states, Save Changes to choose whether changes apply to every game or only this one, and Reset Game.
-- Quit: Returns to the launcher.
+- Options: Every setting DSperate has, as lists: Emulation, Visual FX, Layout, Controls, Shortcuts and DS Options, then Cheats and Achievements when the game has them, Manage Save Slots to delete states, Save Changes to choose whether changes apply to every game or only this one, and Reset Game.
+- Quit: Fades the screen to black and returns to the launcher. The quit shortcut fades out the same way.
 
 On NextUI the menu follows the theme colours and font chosen in NextUI's settings. On MinUI it uses MinUI's own look.
 
@@ -94,7 +109,7 @@ The MENU tap is `pause.alt = mod` in the `[padhotkeys]` section of the config. C
 
 - Game saves are stored in `/Saves/DSP/`.
 - Save states are stored in `/.userdata/shared/DSP-dsperate/`, named after the rom.
-- Screenshots are written to `/Screenshots/`, named the way every other system on the card names them.
+- Screenshots are written to `/Screenshots/`, named the way NextUI names them, including the game's name from a `map.txt` beside the rom. Each one shows "Screenshot saved" unless NextUI's screenshot notification is turned off.
 - Cheats are read from `/Cheats/DSP/usrcheat.dat` if present.
 
 Saving or loading a state also leaves the launcher a thumbnail, so the game shows up in the game switcher and offers RESUME when you next open it.
@@ -122,13 +137,16 @@ Debug logs are written to the `/.userdata/$PLATFORM/logs/` folder, as `DSP.txt`.
 These lines in that log are worth knowing:
 
 - `pause menu: <look> look, font <path>` names the launcher look and the font the pause menu was given. `built-in` means no launcher font was found, and the menu draws with DSperate's own small font.
-- `controller: <name>` confirms the pad mapping was accepted. DSperate has no joystick fallback, so if this line is missing there will be no input at all.
+- `pad mapping: <guid> (<name>)` names the pad the mapping was added for, and `controller: <name>` confirms DSperate opened it. DSperate has no joystick fallback, so if the `controller:` line is missing there will be no input at all.
 - `NextUI fixed h700 pad layout, using the TrimUI button numbers` appears on `h700` with NextUI rc11 or later. Without it, the pre-rc11 per-model button numbers are in use.
 - `video: ...` names the display path that opened. Expect `fbdev scanout` on `h700`. Anything mentioning the SDL renderer means it fell back and will be slow.
 - The recompiler banner. An interpreter note instead means the JIT is off, and the emulator will be far too slow.
 - `resume state <path> not found, falling back to autoload` means RESUME in the game switcher asked for a save state slot that no longer exists, so the game started from its last autosave instead.
 - `resume state <path> predates this DSperate (format N, needs M), falling back to autoload` means the slot RESUME asked for was saved by an older DSperate that wrote a format this one cannot read, so the game started from its last autosave instead.
 - `state: no state in slot` or `state: cannot load ...` means DSperate refused the state RESUME asked for. The pak exits back to the launcher rather than starting the game from a state it cannot read.
+- `timing: <seconds> <step>` lines mark the launch, the config being ready, the launcher's look being read, the pad mapping, the emulator starting, the game running, quitting, the state being saved, the emulator exiting and the card being synced. The seconds count from when the device booted, so the gap between two lines is how long that step took.
+
+To find the numbers of buttons the pak does not use yet, create an empty `probe.txt` in `/.userdata/$PLATFORM/DSP-dsperate/` and launch a game. For the first 15 seconds, before the game appears, press each button once. Every press is written to the log as a `probe:` line, and `probe.txt` is removed so the next launch is a normal one.
 
 ## Development
 

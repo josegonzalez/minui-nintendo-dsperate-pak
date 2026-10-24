@@ -54,8 +54,11 @@ dsp_init_env() {
     MINUI_SHARED_DIR="$SHARED_USERDATA_PATH/.minui"
     MINUI_DIR="$MINUI_SHARED_DIR/DSP"
     export MINUI_SHARED_DIR MINUI_DIR
-    MINUI_ROM_FILE="$(basename "$ROM_PATH")"
+    MINUI_ROM_FILE="${ROM_PATH##*/}"
     export MINUI_ROM_FILE
+    # The profile the config was seeded from, which the pause menu's
+    # Shortcuts page restores its defaults from.
+    export MINUI_PROFILE_INI="$PAK_DIR/configs/$PROFILE_INI.ini"
     # auto_resume.txt holds the path relative to the card, and the frontend
     # rebuilds it with a bare concat. An absolute path here becomes
     # /mnt/SDCARD/mnt/SDCARD/... and the resume silently never happens, so it
@@ -80,38 +83,40 @@ dsp_init_env() {
 
 # DSperate opens the pad with SDL_IsGameController / SDL_GameControllerOpen and
 # has no joystick fallback, and MinUI ships no GameController mapping, so
-# without this there is no input at all. The GUID is read from the device
-# because SDL derives it from evdev ids and hashes it differently across SDL
-# versions; the mapping body comes from the platform profile.
+# without one there is no input at all. The mapping body comes from the
+# platform profile; DSperate puts the pad's GUID in front of it as it starts
+# (minui_pad.h), because SDL derives the GUID from evdev ids and hashes it
+# differently across SDL versions. Reading it here instead would mean
+# starting SDL twice per launch.
 dsp_export_pad_mapping() {
     if [ -z "$PROFILE_MAP" ]; then
         echo "No pad mapping for $PLATFORM/${DEVICE:-}, leaving SDL_GAMECONTROLLERCONFIG alone"
         return 0
     fi
 
-    _guid_out="$("$BIN_DIR/dsp-pad-guid" 2>&1)" || {
-        echo "dsp-pad-guid found no pad; DSperate will start without controller input"
-        echo "$_guid_out"
-        return 0
-    }
-
-    _guid="$(echo "$_guid_out" | sed -n '1p')"
-    _name="$(echo "$_guid_out" | sed -n '2p')"
-    [ -n "$_guid" ] || return 0
-    [ -n "$_name" ] || _name="Controller"
-
+    MINUI_PAD_MAP="$PROFILE_MAP"
     # NextUI h700-rc11 and later give every H700 model the TrimUI numbers and
-    # say so through the GUID. Its SDL also carries a built-in mapping for that
-    # GUID, but this one takes priority and matches the TrimUI pads, so it is
-    # still exported rather than left to SDL.
-    _map="$PROFILE_MAP"
-    if [ -n "${PROFILE_MAP_FIXED:-}" ] && [ "$_guid" = "$DSP_H700_FIXED_GUID" ]; then
-        _map="$PROFILE_MAP_FIXED"
-        echo "NextUI fixed h700 pad layout, using the TrimUI button numbers"
-    fi
+    # say so through the GUID, which then takes this body instead. Its SDL
+    # also carries a built-in mapping for that GUID, but the pak's takes
+    # priority and matches the TrimUI pads.
+    MINUI_PAD_MAP_FIXED="${PROFILE_MAP_FIXED:-}"
+    MINUI_PAD_FIXED_GUID="$DSP_H700_FIXED_GUID"
+    export MINUI_PAD_MAP MINUI_PAD_MAP_FIXED MINUI_PAD_FIXED_GUID
 
-    export SDL_GAMECONTROLLERCONFIG="$_guid,$_name,$_map,platform:Linux"
-    echo "pad mapping: $_guid ($_name)"
+    # What to call the controls the device labels its own way: the Brick's
+    # F1 and F2 are SDL's leftstick and rightstick.
+    MINUI_BUTTON_LABELS="${PROFILE_LABELS:-}"
+    export MINUI_BUTTON_LABELS
+}
+
+# A one-off hunt for a device's spare buttons. With probe.txt beside
+# device.txt, every control pressed in the next 15 seconds is logged before
+# the game starts, and the trigger is used up.
+dsp_probe_buttons() {
+    [ -f "$DSP_USERDATA_DIR/probe.txt" ] || return 0
+    rm -f "$DSP_USERDATA_DIR/probe.txt"
+    echo "Probing the controls for 15 seconds"
+    "$BIN_DIR/dsp-pad-guid" --probe 15 || echo "dsp-pad-guid could not probe the controls"
 }
 
 # Seed once per profile so remapping done in DSperate's pause menu survives later
@@ -125,8 +130,12 @@ dsp_seed_config() {
         return 0
     fi
 
-    if [ -f "$DSP_DEVICE_FILE" ] && [ "$(cat "$DSP_DEVICE_FILE")" = "$PROFILE_INI" ]; then
-        return 0
+    if [ -f "$DSP_DEVICE_FILE" ]; then
+        _seeded=""
+        read -r _seeded <"$DSP_DEVICE_FILE" || true
+        if [ "$_seeded" = "$PROFILE_INI" ]; then
+            return 0
+        fi
     fi
 
     echo "Seeding DSperate config from the $PROFILE_INI profile"
@@ -148,29 +157,63 @@ dsp_seed_config() {
     sync
 }
 
-# A bare MENU tap opens the pause menu, as it does in minarch. The shipped
-# profiles bind it, but a config seeded by an older pak never will be again,
-# so add the binding once. A pause.alt the player already has, including
-# "none" to turn the tap off, is left alone.
+# The profiles are seeded once, so a config from an older pak gains what the
+# profiles have since added, once:
+#   - a bare MENU tap opens the pause menu, as it does in minarch;
+#   - MENU+START moves the pip screen, unless MENU+START is already taken,
+#     which a config with no pause line counts as, upstream's pause being
+#     mod+start;
+#   - the state and slot chords are off, as they ship now;
+#   - the mic blow is off, rather than upstream's default of L3, which the
+#     stick profiles also give the pen's tap.
+# Anything the player set for these keys themselves is left alone, and a key
+# under [hotkeys] is the keyboard's and does not count. One awk pass, which
+# leaves the file untouched when there is nothing to add: this runs on every
+# launch, and each process costs the slower devices tens of milliseconds.
 dsp_migrate_config() {
     [ -f "$DSP_CONFIG" ] || return 0
 
-    if awk '
-        /^[[:space:]]*\[/ { section = $0; gsub(/[[:space:]]/, "", section) }
-        section == "[padhotkeys]" && /^[[:space:]]*pause\.alt[[:space:]]*=/ { found = 1 }
-        END { exit !found }
+    if awk -v out="$DSP_CONFIG.tmp" -v path="$DSP_CONFIG" '
+        function trim(s) { gsub(/^[[:space:]]+|[[:space:]]+$/, "", s); return s }
+        function want(k, v) {
+            if (k in has) return
+            has[k] = 1
+            adds[++m] = k " = " v
+        }
+        { lines[++n] = $0 }
+        /^[[:space:]]*\[/ {
+            section = $0
+            gsub(/[[:space:]]/, "", section)
+            if (section == "[padhotkeys]" && !header) header = n
+            next
+        }
+        section == "[padhotkeys]" && index($0, "=") {
+            eq = index($0, "=")
+            has[trim(substr($0, 1, eq - 1))] = 1
+            taken[trim(substr($0, eq + 1))] = 1
+        }
+        END {
+            want("pause.alt", "mod")
+            if (("pause" in has) && !("mod+start" in taken)) want("pip_corner_next", "mod+start")
+            want("save_state", "none")
+            want("load_state", "none")
+            want("slot_next", "none")
+            want("slot_prev", "none")
+            want("mic", "none")
+            if (!m) exit 1
+            for (i = 1; i <= n; i++) {
+                print lines[i] > out
+                if (i == header) for (j = 1; j <= m; j++) print adds[j] > out
+            }
+            if (!header) {
+                print "" > out
+                print "[padhotkeys]" > out
+                for (j = 1; j <= m; j++) print adds[j] > out
+            }
+            for (j = 1; j <= m; j++) printf "Adding %s under [padhotkeys] in %s\n", adds[j], path
+        }
     ' "$DSP_CONFIG"; then
-        return 0
-    fi
-
-    echo "Binding a MENU tap to the pause menu in $DSP_CONFIG"
-    if grep -q '^[[:space:]]*\[padhotkeys\][[:space:]]*$' "$DSP_CONFIG"; then
-        awk '
-            { print }
-            !done && /^[[:space:]]*\[padhotkeys\][[:space:]]*$/ { print "pause.alt = mod"; done = 1 }
-        ' "$DSP_CONFIG" >"$DSP_CONFIG.tmp" && mv -f "$DSP_CONFIG.tmp" "$DSP_CONFIG"
-    else
-        printf '\n[padhotkeys]\npause.alt = mod\n' >>"$DSP_CONFIG"
+        mv -f "$DSP_CONFIG.tmp" "$DSP_CONFIG"
     fi
 }
 
@@ -183,12 +226,34 @@ dsp_detect_style() {
     _settings="$SHARED_USERDATA_PATH/minuisettings.txt"
     MINUI_STYLE="minui"
     MINUI_FONT=""
+    # NextUI's "Screenshot saved" notice switch, on unless it says 0. Stock
+    # MinUI has no such setting, so the notice always shows there.
+    MINUI_NOTIFY_SCREENSHOT=1
 
     if [ -f "$_settings" ] && [ -f "$_res/font1.ttf" ]; then
         MINUI_STYLE="nextui"
+        # Read in the shell, last line winning as NextUI's own reader does,
+        # rather than a sed pipeline per key: this runs on every launch.
+        _font=""
+        _notify=""
+        for _i in 1 2 3 4 5 6 7; do
+            eval "_colour$_i="
+        done
+        _cr="$(printf '\r')"
+        while IFS= read -r _line || [ -n "$_line" ]; do
+            _line="${_line%"$_cr"}"
+            case "$_line" in
+            font=*) _font="${_line#font=}" ;;
+            notifyScreenshot=*) _notify="${_line#notifyScreenshot=}" ;;
+            color[1-7]=*)
+                _i="${_line%%=*}"
+                eval "_colour${_i#color}=\${_line#*=}"
+                ;;
+            esac
+        done <"$_settings"
+
         # NextUI's own reading of font=: 0 is font2 and 1 is font1 (older
         # releases wrote the number), anything else is a file name.
-        _font="$(sed -n 's/^font=//p' "$_settings" | tail -n 1 | tr -d '\r')"
         case "$_font" in
         0) _font="font2.ttf" ;;
         "" | 1) _font="font1.ttf" ;;
@@ -196,8 +261,12 @@ dsp_detect_style() {
         [ -f "$_res/$_font" ] || _font="font1.ttf"
         MINUI_FONT="$_res/$_font"
 
+        if [ "$_notify" = "0" ]; then
+            MINUI_NOTIFY_SCREENSHOT=0
+        fi
+
         for _i in 1 2 3 4 5 6 7; do
-            _colour="$(sed -n "s/^color$_i=//p" "$_settings" | tail -n 1 | tr -d '\r')"
+            eval "_colour=\$_colour$_i"
             if [ -n "$_colour" ]; then
                 eval "MINUI_COLOR$_i=\$_colour"
                 export "MINUI_COLOR$_i"
@@ -207,7 +276,7 @@ dsp_detect_style() {
         MINUI_FONT="$_res/BPreplayBold-unhinted.otf"
     fi
 
-    export MINUI_STYLE MINUI_FONT
+    export MINUI_STYLE MINUI_FONT MINUI_NOTIFY_SCREENSHOT
     echo "pause menu: $MINUI_STYLE look, font ${MINUI_FONT:-built-in}"
 }
 
@@ -289,19 +358,39 @@ dsp_run_emulator() {
         set -- "$@" "$DSP_RESUME_FLAG"
     fi
 
+    dsp_mark "emulator starting"
     ./dsperate "$@"
+    _status=$?
+    dsp_mark "emulator exited"
+    return "$_status"
+}
+
+# A "timing:" line in the log: seconds since boot, to the hundredth, then
+# what just happened. DSperate writes its own on the same clock, so the two
+# line up when working out where a slow start or exit spends its time.
+dsp_mark() {
+    _up="?"
+    if [ -r /proc/uptime ]; then
+        read -r _up _ </proc/uptime
+    fi
+    echo "timing: $_up $1"
 }
 
 cleanup() {
     rm -f /tmp/stay_awake
 
-    # DSperate writes the battery save on SIGTERM, so -9 straight away loses the
-    # last save. Give it a moment before insisting.
-    killall -q -15 dsperate 2>/dev/null || true
-    sleep 2
-    killall -q -9 dsperate 2>/dev/null || true
+    # Only when the pak itself is being stopped: after a normal exit DSperate
+    # is already gone, and waiting for it would only hold up the launcher.
+    # DSperate writes the battery save on SIGTERM, so -9 straight away loses
+    # the last save. Give it a moment before insisting.
+    if pidof dsperate >/dev/null 2>&1; then
+        killall -q -15 dsperate 2>/dev/null || true
+        sleep 2
+        killall -q -9 dsperate 2>/dev/null || true
+    fi
 
     sync
+    dsp_mark "synced"
 }
 
 main() {
@@ -312,6 +401,7 @@ main() {
     exec 2>&1
 
     echo "$0" "$@"
+    dsp_mark "launch"
 
     dsp_normalize_platform
 
@@ -344,8 +434,12 @@ main() {
 
     dsp_seed_config
     dsp_migrate_config
+    dsp_mark "config ready"
     dsp_detect_style
+    dsp_mark "style read"
     dsp_export_pad_mapping
+    dsp_mark "pad mapped"
+    dsp_probe_buttons
 
     # Only on a panel whose rotation SDL cannot tell DSperate about; the fbdev
     # tier writes /dev/fb0 directly. Empty everywhere else.

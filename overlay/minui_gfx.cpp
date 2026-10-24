@@ -107,6 +107,7 @@ bool Painter::inside(int x, int y) const {
 }
 
 void Painter::plot(int x, int y, u32 colour, u32 cover) {
+  if (alpha_ < 255) cover = (cover * alpha_ + 127) / 255;
   if (!inside(x, y) || cover == 0) return;
   const u32 a = ((colour >> 24) * cover + 127) / 255;
   u32& d = c_.px[static_cast<size_t>(y) * c_.pitch + static_cast<size_t>(x)];
@@ -114,6 +115,7 @@ void Painter::plot(int x, int y, u32 colour, u32 cover) {
 }
 
 void Painter::fill(int x, int y, int w, int h, u32 colour) {
+  if (alpha_ < 255) colour = (colour & 0x00FFFFFF) | ((((colour >> 24) * alpha_ + 127) / 255) << 24);
   const int x0 = std::max({x, 0, clip_.x0}), x1 = std::min({x + w, c_.w, clip_.x1});
   const int y0 = std::max({y, 0, clip_.y0}), y1 = std::min({y + h, c_.h, clip_.y1});
   for (int yy = y0; yy < y1; ++yy) {
@@ -232,7 +234,16 @@ int Font::draw(Painter& p, int x, int y, int px, u32 colour, const std::string& 
     // The bitmap font, centred in the line box a real font would have used.
     const int gs = bitmap_scale(px);
     const int gy = y + (line_height(px) - 7 * gs) / 2;
-    return draw_text(p.canvas(), x, gy, gs, colour, s.c_str(), keep_case) + gs;
+    if (p.alpha() == 255) return draw_text(p.canvas(), x, gy, gs, colour, s.c_str(), keep_case) + gs;
+    // Upstream's draw_text writes opaque pixels, so a fading line is drawn
+    // into a scratch canvas first and blended from there.
+    const int w = width(px, s) + gs, h = 7 * gs;
+    std::vector<u32> scratch(static_cast<size_t>(w) * h, 0);
+    draw_text(Canvas{scratch.data(), static_cast<u32>(w), w, h}, 0, 0, gs, colour, s.c_str(), keep_case);
+    for (int yy = 0; yy < h; ++yy)
+      for (int xx = 0; xx < w; ++xx)
+        if (const u32 c = scratch[static_cast<size_t>(yy) * w + xx]) p.plot(x + xx, gy + yy, c);
+    return x + w;
   }
   const float scale = stbtt_ScaleForMappingEmToPixels(&info_->info, static_cast<float>(px));
   const int baseline = y + static_cast<int>(std::lround(info_->ascent * scale));

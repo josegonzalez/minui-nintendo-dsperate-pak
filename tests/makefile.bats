@@ -232,7 +232,7 @@ load test_helper
     [ -n "$output" ]
     mk MINUI_OVERLAY
     overlay="$output"
-    for f in minui.h minui.cpp minui_gfx.h minui_gfx.cpp minui_menu.h minui_menu.cpp minui_stb.cpp stb_image.h stb_truetype.h; do
+    for f in minui.h minui.cpp minui_gfx.h minui_gfx.cpp minui_menu.h minui_menu.cpp minui_pad.h minui_shortcuts.h minui_stb.cpp stb_image.h stb_truetype.h; do
         [[ " $overlay " == *" $f "* ]] || return 1
     done
     for f in $overlay; do
@@ -296,9 +296,60 @@ load test_helper
 @test "every profile opens the pause menu on a bare MENU tap" {
     for f in "$REPO_ROOT"/config/dsperate/*.ini; do
         sed -n '/^\[padhotkeys\]/,/^\[/p' "$f" | grep -q '^pause.alt = mod$' || return 1
-        # MENU+Y still works.
-        sed -n '/^\[padhotkeys\]/,/^\[/p' "$f" | grep -q '^pause = mod+y$' || return 1
     done
+}
+
+@test "every profile binds only the swap, pip and switcher chords" {
+    for f in "$REPO_ROOT"/config/dsperate/*.ini; do
+        chords="$(sed -n '/^\[padhotkeys\]/,/^\[/p' "$f" | grep '^[a-z_.]* = mod+' | cut -d' ' -f1 | sort | tr '\n' ' ')"
+        [ "$chords" = "game_switcher pip_corner_next screen_swap " ] || {
+            echo "$f binds $chords"
+            return 1
+        }
+    done
+}
+
+# The Shortcuts page's table, as "key chord" lines, read from the header the
+# way it promises to be laid out: one entry per line.
+shortcut_table() {
+    sed -n 's/^  {"\([^"]*\)", "[^"]*", "\([^"]*\)", ".*$/\1 \2/p' "$REPO_ROOT/overlay/minui_shortcuts.h"
+}
+
+@test "the shortcut table reads as one entry per line" {
+    [ "$(shortcut_table | wc -l)" -eq 18 ]
+    shortcut_table | grep -q '^pause.alt mod$'
+    shortcut_table | grep -q '^pip_corner_next mod+start$'
+}
+
+@test "every profile sets every shortcut, to its chord or to none" {
+    for f in "$REPO_ROOT"/config/dsperate/*.ini; do
+        section="$(sed -n '/^\[padhotkeys\]/,/^\[/p' "$f")"
+        while read -r key chord; do
+            value="$(echo "$section" | sed -n "s/^$key = //p")"
+            [ -n "$value" ] || {
+                echo "$f has no $key"
+                return 1
+            }
+            [ "$value" = "$chord" ] || [ "$value" = "none" ] || {
+                echo "$f has $key = $value, not $chord"
+                return 1
+            }
+        done < <(shortcut_table)
+    done
+}
+
+@test "the state, slot, screenshot, mic and lid chords ship off, and MENU+START moves the pip screen" {
+    for f in "$REPO_ROOT"/config/dsperate/*.ini; do
+        section="$(sed -n '/^\[padhotkeys\]/,/^\[/p' "$f")"
+        for key in save_state load_state slot_next slot_prev screenshot mic lid; do
+            echo "$section" | grep -q "^$key = none$" || return 1
+        done
+        echo "$section" | grep -q '^pip_corner_next = mod+start$' || return 1
+    done
+}
+
+@test "no two shortcuts share a chord" {
+    [ -z "$(shortcut_table | awk '{ print $2 }' | sort | uniq -d)" ]
 }
 
 @test "the GCC 8 workarounds are still present" {

@@ -87,73 +87,50 @@ setup() {
     [ ! -f "$DSP_CONFIG" ]
 }
 
-@test "the pad mapping is assembled from the device GUID and the profile body" {
+@test "the pad mapping body is handed to DSperate, which reads the GUID itself" {
+    unset SDL_GAMECONTROLLERCONFIG
     dsp_export_pad_mapping
-    [ -n "$SDL_GAMECONTROLLERCONFIG" ]
-    # guid,name,body,platform:Linux
-    case "$SDL_GAMECONTROLLERCONFIG" in
-    "030000004c050000c405000011010000,Fake Pad,"*",platform:Linux") ;;
-    *)
-        echo "unexpected: $SDL_GAMECONTROLLERCONFIG"
-        return 1
-        ;;
-    esac
-    [ "${SDL_GAMECONTROLLERCONFIG#*guide:b}" != "$SDL_GAMECONTROLLERCONFIG" ]
+    [ "$MINUI_PAD_MAP" = "$DSP_MAP_TRIMUI_BRICK" ]
+    [ -z "$MINUI_PAD_MAP_FIXED" ]
+    [ "$MINUI_PAD_FIXED_GUID" = "$DSP_H700_FIXED_GUID" ]
+    # Exported, so DSperate sees them, and SDL is left to DSperate.
+    [ "$(sh -c 'echo "$MINUI_PAD_MAP"')" = "$DSP_MAP_TRIMUI_BRICK" ]
+    [ -z "${SDL_GAMECONTROLLERCONFIG:-}" ]
 }
 
-# Re-root the fake card on an h700 device whose pad reports <guid>.
+@test "mapping the pad does not start SDL a second time" {
+    printf '#!/bin/sh\necho ran >>"%s"\n' "$BATS_TEST_TMPDIR/pad-guid.log" >"$PAK_DIR/$PLATFORM/dsp-pad-guid"
+    chmod +x "$PAK_DIR/$PLATFORM/dsp-pad-guid"
+    dsp_export_pad_mapping
+    [ ! -f "$BATS_TEST_TMPDIR/pad-guid.log" ]
+}
+
+# Re-root the fake card on an h700 device.
 setup_h700_pad() {
     setup_launch h700 "$1"
-    unset LD_LIBRARY_PATH SDL_GAMECONTROLLERCONFIG
+    unset LD_LIBRARY_PATH MINUI_PAD_MAP MINUI_PAD_MAP_FIXED
     dsp_platform_profile h700 "$1"
     dsp_init_env
-    stub_pad_guid "$2" "ANBERNIC-keys"
 }
 
-@test "NextUI's fixed h700 layout takes the TrimUI mapping" {
-    setup_h700_pad rg40xxh "$DSP_H700_FIXED_GUID"
+@test "an h700 model passes its own body and NextUI's fixed-layout one" {
+    setup_h700_pad rg40xxh
     dsp_export_pad_mapping
-    [ "$SDL_GAMECONTROLLERCONFIG" = "$DSP_H700_FIXED_GUID,ANBERNIC-keys,$DSP_MAP_TRIMUI,platform:Linux" ]
-}
+    [ "$MINUI_PAD_MAP" = "$DSP_MAP_H700_STICKS" ]
+    [ "$MINUI_PAD_MAP_FIXED" = "$DSP_MAP_TRIMUI" ]
 
-@test "NextUI's fixed h700 layout on a stickless model takes the stickless TrimUI mapping" {
-    setup_h700_pad rg35xxplus "$DSP_H700_FIXED_GUID"
+    setup_h700_pad rg35xxplus
     dsp_export_pad_mapping
-    [ "$SDL_GAMECONTROLLERCONFIG" = "$DSP_H700_FIXED_GUID,ANBERNIC-keys,$DSP_MAP_TRIMUI_NOSTICK,platform:Linux" ]
-}
-
-@test "an h700 pad on the old layout keeps the per-model mapping" {
-    # Pre-rc11 NextUI, or SDL_JOYSTICK_H700_FIXED_LAYOUT=0.
-    setup_h700_pad rg40xxh 19000000010000000100000000010000
-    dsp_export_pad_mapping
-    [ "$SDL_GAMECONTROLLERCONFIG" = "19000000010000000100000000010000,ANBERNIC-keys,$DSP_MAP_H700_STICKS,platform:Linux" ]
-
-    setup_h700_pad rg35xxplus 19000000010000000100000000010000
-    dsp_export_pad_mapping
-    [ "$SDL_GAMECONTROLLERCONFIG" = "19000000010000000100000000010000,ANBERNIC-keys,$DSP_MAP_H700_NOSTICK,platform:Linux" ]
-}
-
-@test "the fixed-layout GUID changes nothing off h700" {
-    stub_pad_guid "$DSP_H700_FIXED_GUID" "Fake Pad"
-    dsp_export_pad_mapping
-    [ "$SDL_GAMECONTROLLERCONFIG" = "$DSP_H700_FIXED_GUID,Fake Pad,$DSP_MAP_TRIMUI_NOSTICK,platform:Linux" ]
-}
-
-@test "no pad means no mapping rather than a broken one" {
-    printf '#!/bin/sh\nexit 1\n' >"$PAK_DIR/$PLATFORM/dsp-pad-guid"
-    chmod +x "$PAK_DIR/$PLATFORM/dsp-pad-guid"
-    unset SDL_GAMECONTROLLERCONFIG
-    run dsp_export_pad_mapping
-    [ "$status" -eq 0 ]
-    [ -z "${SDL_GAMECONTROLLERCONFIG:-}" ]
+    [ "$MINUI_PAD_MAP" = "$DSP_MAP_H700_NOSTICK" ]
+    [ "$MINUI_PAD_MAP_FIXED" = "$DSP_MAP_TRIMUI_NOSTICK" ]
 }
 
 @test "an unsupported platform yields no mapping" {
     dsp_platform_profile miyoomini ""
-    unset SDL_GAMECONTROLLERCONFIG
+    unset MINUI_PAD_MAP
     run dsp_export_pad_mapping
     [ "$status" -eq 0 ]
-    [ -z "${SDL_GAMECONTROLLERCONFIG:-}" ]
+    [ -z "${MINUI_PAD_MAP:-}" ]
 }
 
 @test "bundled binaries come first on LD_LIBRARY_PATH, then NextUI, then the system" {
@@ -483,4 +460,144 @@ fake_nextui() {
     rm -f "$DSP_CONFIG"
     dsp_migrate_config
     [ ! -f "$DSP_CONFIG" ]
+}
+
+@test "every profile already has what migration adds" {
+    for profile in no-sticks one-stick two-sticks; do
+        rm -f "$DSP_DEVICE_FILE"
+        PROFILE_INI="$profile"
+        dsp_seed_config
+        cp "$DSP_CONFIG" "$BATS_TEST_TMPDIR/seeded.ini"
+        dsp_migrate_config
+        cmp -s "$DSP_CONFIG" "$BATS_TEST_TMPDIR/seeded.ini"
+    done
+}
+
+@test "an older config gains MENU+START and loses the state and mic chords, once" {
+    printf '[padhotkeys]\npause = mod+y\npause.alt = mod\n\n[cheevos]\nenabled = true\n' >"$DSP_CONFIG"
+    dsp_migrate_config
+    dsp_migrate_config
+    section="$(sed -n '/^\[padhotkeys\]/,/^\[cheevos\]/p' "$DSP_CONFIG")"
+    [ "$(echo "$section" | grep -c '^pip_corner_next = mod+start$')" -eq 1 ]
+    for key in save_state load_state slot_next slot_prev mic; do
+        [ "$(echo "$section" | grep -c "^$key = none$")" -eq 1 ]
+    done
+}
+
+@test "a player's own state and pip chords are kept" {
+    printf '[padhotkeys]\npause = mod+y\nsave_state = mod+rightshoulder\nslot_next = none\npip_corner_next = mod+x\n' >"$DSP_CONFIG"
+    dsp_migrate_config
+    grep -q '^save_state = mod+rightshoulder$' "$DSP_CONFIG"
+    [ "$(grep -c '^slot_next' "$DSP_CONFIG")" -eq 1 ]
+    grep -q '^pip_corner_next = mod+x$' "$DSP_CONFIG"
+    ! grep -q '^pip_corner_next = mod+start$' "$DSP_CONFIG"
+    grep -q '^load_state = none$' "$DSP_CONFIG"
+}
+
+@test "MENU+START is not added where it is already taken" {
+    printf '[padhotkeys]\npause = mod+y\nscreenshot = mod+start\n' >"$DSP_CONFIG"
+    dsp_migrate_config
+    ! grep -q '^pip_corner_next' "$DSP_CONFIG"
+}
+
+@test "with no pause line, upstream's MENU+START pause keeps it" {
+    printf '[padhotkeys]\nquit = mod+a\n' >"$DSP_CONFIG"
+    dsp_migrate_config
+    ! grep -q '^pip_corner_next' "$DSP_CONFIG"
+    grep -q '^save_state = none$' "$DSP_CONFIG"
+}
+
+@test "the pause menu is told the profile it restores shortcuts from" {
+    [ "$MINUI_PROFILE_INI" = "$PAK_DIR/configs/no-sticks.ini" ]
+    [ -f "$MINUI_PROFILE_INI" ]
+}
+
+@test "the pause menu is told what the Brick calls its F1 and F2" {
+    dsp_export_pad_mapping
+    [ "$MINUI_BUTTON_LABELS" = "leftstick=F1 rightstick=F2" ]
+}
+
+@test "a device that names its buttons as SDL does exports no labels" {
+    dsp_platform_profile tg5040 smartpro
+    dsp_export_pad_mapping
+    [ -z "$MINUI_BUTTON_LABELS" ]
+}
+
+@test "probe.txt runs the probe once, and nothing runs without it" {
+    printf '#!/bin/sh\necho "$@" >>"%s"\n' "$BATS_TEST_TMPDIR/probe.log" >"$PAK_DIR/$PLATFORM/dsp-pad-guid"
+    chmod +x "$PAK_DIR/$PLATFORM/dsp-pad-guid"
+    dsp_probe_buttons
+    [ ! -f "$BATS_TEST_TMPDIR/probe.log" ]
+    touch "$DSP_USERDATA_DIR/probe.txt"
+    dsp_probe_buttons
+    dsp_probe_buttons
+    [ "$(cat "$BATS_TEST_TMPDIR/probe.log")" = "--probe 15" ]
+    [ ! -f "$DSP_USERDATA_DIR/probe.txt" ]
+}
+
+@test "a probe that fails does not stop the launch" {
+    printf '#!/bin/sh\nexit 1\n' >"$PAK_DIR/$PLATFORM/dsp-pad-guid"
+    chmod +x "$PAK_DIR/$PLATFORM/dsp-pad-guid"
+    touch "$DSP_USERDATA_DIR/probe.txt"
+    run dsp_probe_buttons
+    [ "$status" -eq 0 ]
+}
+
+@test "NextUI's screenshot notice setting reaches the pause menu" {
+    mkdir -p "$SDCARD_PATH/.system/res"
+    touch "$SDCARD_PATH/.system/res/font1.ttf"
+    printf 'font=1\r\n' >"$SHARED_USERDATA_PATH/minuisettings.txt"
+    dsp_detect_style
+    [ "$MINUI_NOTIFY_SCREENSHOT" = "1" ]
+    printf 'font=1\r\nnotifyScreenshot=0\r\n' >"$SHARED_USERDATA_PATH/minuisettings.txt"
+    dsp_detect_style
+    [ "$MINUI_NOTIFY_SCREENSHOT" = "0" ]
+    printf 'notifyScreenshot=0\nnotifyScreenshot=1\n' >"$SHARED_USERDATA_PATH/minuisettings.txt"
+    dsp_detect_style
+    [ "$MINUI_NOTIFY_SCREENSHOT" = "1" ]
+}
+
+@test "stock MinUI always gets the screenshot notice" {
+    printf 'notifyScreenshot=0\n' >"$SHARED_USERDATA_PATH/minuisettings.txt"
+    dsp_detect_style
+    [ "$MINUI_STYLE" = "minui" ]
+    [ "$MINUI_NOTIFY_SCREENSHOT" = "1" ]
+}
+
+@test "an older config keeps its screenshot chord" {
+    printf '[padhotkeys]\npause = mod+y\nscreenshot = mod+b\n' >"$DSP_CONFIG"
+    dsp_migrate_config
+    grep -q '^screenshot = mod+b$' "$DSP_CONFIG"
+}
+
+@test "cleanup does not wait when DSperate has already exited" {
+    printf '#!/bin/sh\nexit 1\n' >"$STUB_BIN/pidof"
+    printf '#!/bin/sh\necho "sleep $*" >>"%s"\n' "$BATS_TEST_TMPDIR/calls.log" >"$STUB_BIN/sleep"
+    printf '#!/bin/sh\necho "killall $*" >>"%s"\n' "$BATS_TEST_TMPDIR/calls.log" >"$STUB_BIN/killall"
+    chmod +x "$STUB_BIN/pidof" "$STUB_BIN/sleep" "$STUB_BIN/killall"
+    run cleanup
+    [ "$status" -eq 0 ]
+    [ ! -f "$BATS_TEST_TMPDIR/calls.log" ]
+    echo "$output" | grep -q '^timing: .* synced$'
+}
+
+@test "cleanup stops a DSperate that is still running" {
+    printf '#!/bin/sh\nexit 0\n' >"$STUB_BIN/pidof"
+    printf '#!/bin/sh\necho "sleep $*" >>"%s"\n' "$BATS_TEST_TMPDIR/calls.log" >"$STUB_BIN/sleep"
+    printf '#!/bin/sh\necho "killall $*" >>"%s"\n' "$BATS_TEST_TMPDIR/calls.log" >"$STUB_BIN/killall"
+    chmod +x "$STUB_BIN/pidof" "$STUB_BIN/sleep" "$STUB_BIN/killall"
+    run cleanup
+    [ "$status" -eq 0 ]
+    [ "$(sed -n 1p "$BATS_TEST_TMPDIR/calls.log")" = "killall -q -15 dsperate" ]
+    [ "$(sed -n 2p "$BATS_TEST_TMPDIR/calls.log")" = "sleep 2" ]
+    [ "$(sed -n 3p "$BATS_TEST_TMPDIR/calls.log")" = "killall -q -9 dsperate" ]
+}
+
+@test "timing marks name what happened" {
+    run dsp_mark "launch"
+    [ "$status" -eq 0 ]
+    case "$output" in
+    "timing: "*" launch") ;;
+    *) return 1 ;;
+    esac
 }

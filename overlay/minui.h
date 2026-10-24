@@ -76,6 +76,18 @@ public:
 
   bool active() const { return !dir_.empty(); }
 
+  // The built-in pad's mapping (minui_pad.h), from the bodies launch.sh
+  // exports (MINUI_PAD_MAP, MINUI_PAD_MAP_FIXED, MINUI_PAD_FIXED_GUID) and
+  // the first joystick's GUID, added to SDL before the frontend opens the
+  // pad. Exports MINUI_PAD_BUTTONS for the pause menu. Needs SDL's game
+  // controller subsystem up; nothing without MINUI_PAD_MAP.
+  static void add_pad_mapping();
+
+  // A "timing:" line in the log, on the clock /proc/uptime reads, so it
+  // lines up with launch.sh's own marks around the emulator. Nothing when no
+  // launcher is driving the frontend.
+  void mark(const char* what) const;
+
   // The highest slot the switcher will look at. minarch's MENU_SLOT_COUNT is 8,
   // and its marker file only ever holds 0..7; 8 is its "hidden default" and 9
   // its sleep autosave, which is DSperate's ".auto" here.

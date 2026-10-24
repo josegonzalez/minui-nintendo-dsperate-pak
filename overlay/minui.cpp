@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Vendored by minui-nintendo-dsperate-pak. See minui.h.
 #include "minui.h"
+#include "minui_pad.h"
 
 #include <SDL2/SDL.h>
 
@@ -10,6 +11,7 @@
 #include <vector>
 #ifdef __linux__
 #include <dirent.h>
+#include <time.h>
 #include <fcntl.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
@@ -104,6 +106,41 @@ void MinUi::close() {
   if (fd_ >= 0) { ::close(fd_); fd_ = -1; }
   for (int fd : volume_fds_) ::close(fd);
   volume_fds_.clear();
+#endif
+}
+
+void MinUi::add_pad_mapping() {
+  const char* body = std::getenv("MINUI_PAD_MAP");
+  if (!body || !*body) return;
+  if (SDL_NumJoysticks() < 1) {
+    std::fprintf(stderr, "pad mapping: no pad found, so there will be no controller input\n");
+    return;
+  }
+  char guid[33] = {};
+  SDL_JoystickGetGUIDString(SDL_JoystickGetDeviceGUID(0), guid, sizeof guid);
+  const char* name = SDL_JoystickNameForIndex(0);
+  const char* fixed_body = std::getenv("MINUI_PAD_MAP_FIXED");
+  const char* fixed_guid = std::getenv("MINUI_PAD_FIXED_GUID");
+  const minui_pad::Mapping m = minui_pad::choose(guid, name ? name : "", body, fixed_body ? fixed_body : "",
+                                                 fixed_guid ? fixed_guid : "");
+  if (m.sdl.empty()) return;
+  if (m.fixed) std::fprintf(stderr, "NextUI fixed h700 pad layout, using the TrimUI button numbers\n");
+  if (SDL_GameControllerAddMapping(m.sdl.c_str()) < 0) {
+    std::fprintf(stderr, "pad mapping: SDL refused it: %s\n", SDL_GetError());
+    return;
+  }
+  std::fprintf(stderr, "pad mapping: %s (%s)\n", guid, name ? name : "Controller");
+  setenv("MINUI_PAD_BUTTONS", m.buttons.c_str(), 1);
+}
+
+void MinUi::mark(const char* what) const {
+  if (!active()) return;
+#ifdef __linux__
+  timespec ts{};
+  clock_gettime(CLOCK_BOOTTIME, &ts);
+  std::fprintf(stderr, "timing: %.2f %s\n", static_cast<double>(ts.tv_sec) + static_cast<double>(ts.tv_nsec) / 1e9, what);
+#else
+  std::fprintf(stderr, "timing: ? %s\n", what);
 #endif
 }
 

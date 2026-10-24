@@ -9,6 +9,8 @@
 // launcher actually writes.
 #include "frontend/sdl/minui_menu.h"
 #include "frontend/sdl/minui_gfx.h"
+#include "frontend/sdl/minui_pad.h"
+#include "frontend/sdl/minui_shortcuts.h"
 #include "frontend/sdl/menu.h"
 #include "frontend/sdl/settings.h"
 #include "core/cart/miniz/miniz_tdef.h"
@@ -38,6 +40,7 @@ namespace gfx = ds::sdl::minui_gfx;
 namespace {
 
 u32 press(B b) { return 1u << b; }
+void draw_everywhere(MinUiMenu& m, const char* what);
 
 struct FakeHost : ds::sdl::SettingsHost {
   std::map<std::string, std::string> kv;
@@ -47,6 +50,7 @@ struct FakeHost : ds::sdl::SettingsHost {
   std::string pending;
   int commits = 0;
   int rows = 4;
+  std::vector<std::string> pad_keys;   // the pad column's keys, when not pad.kN
 
   std::string get(const char* key) const override {
     const auto it = kv.find(key);
@@ -66,7 +70,8 @@ struct FakeHost : ds::sdl::SettingsHost {
   int binding_count(bool) const override { return rows; }
   Binding binding(bool p, int i) const override {
     Binding b;
-    b.key = (p ? "pad.k" : "keys.k") + std::to_string(i);
+    b.key = p && static_cast<size_t>(i) < pad_keys.size() ? pad_keys[static_cast<size_t>(i)]
+                                                          : (p ? "pad.k" : "keys.k") + std::to_string(i);
     b.label = "ROW" + std::to_string(i);
     const auto it = kv.find(b.key);
     b.value = it == kv.end() ? "NONE" : it->second;
@@ -498,7 +503,50 @@ void test_controls_by_position_on_a_pad() {
   m.input(0);
   m.face_presses(1u << 3);
   m.input(0);
-  CHECK(h.writes.back() == "reset");
+  CHECK(std::count(h.writes.begin(), h.writes.end(), "reset") == 1);
+  // Upstream's Defaults put its chords back; the Shortcuts page's follow.
+  CHECK(h.kv["padhotkeys.modifier"] == "guide");
+  CHECK(h.kv["padhotkeys.pip_corner_next"] == "mod+start");
+}
+
+// With a pad, the Shortcuts page owns the modifier and its chords, so the
+// Controls page's pad column leaves them out, and its rows still bind the
+// right keys.
+void test_controls_hides_shortcuts() {
+  FakeHost h;
+  h.pad = true;
+  h.pad_keys = {"pad.a", "padhotkeys.modifier", "padhotkeys.quit", "padhotkeys.pause.alt",
+                "padhotkeys.fast_forward", "padhotkeys.mute", "padhotkeys.fullscreen",
+                "padhotkeys.volume_down.alt", "padhotkeys.lid.alt", "padhotkeys.quit.alt",
+                "padhotkeys.screen_swap.alt", "padhotkeys.fullscreen.alt", "pad.b"};
+  h.rows = static_cast<int>(h.pad_keys.size());
+  MinUiMenu m(true);
+  m.set_settings_host(&h);
+  to_options(m, kControls);
+  m.input(press(B::BTN_A));                                          // opens on the pad column
+  m.input(press(B::BTN_DOWN));
+  m.face_presses(1u << 2);                                           // clear
+  m.input(0);
+  CHECK(h.kv["pad.b"] == "none");
+  m.input(press(B::BTN_DOWN));                                       // wraps to the top
+  m.face_presses(1u << 2);
+  m.input(0);
+  CHECK(h.kv["pad.a"] == "none");
+  CHECK(!h.kv.count("padhotkeys.quit"));
+  CHECK(!h.kv.count("padhotkeys.modifier"));
+  CHECK(!h.kv.count("padhotkeys.fast_forward"));
+  CHECK(!h.kv.count("padhotkeys.mute"));
+  CHECK(!h.kv.count("padhotkeys.volume_down.alt"));
+  CHECK(!h.kv.count("padhotkeys.lid.alt"));
+  CHECK(!h.kv.count("padhotkeys.quit.alt"));
+  CHECK(!h.kv.count("padhotkeys.screen_swap.alt"));
+  draw_everywhere(m, "the controls page without shortcuts");
+  // The keyboard column keeps its chords.
+  m.input(press(B::BTN_L));
+  m.input(press(B::BTN_DOWN));
+  m.face_presses(1u << 2);
+  m.input(0);
+  CHECK(h.kv["keys.k1"] == "none");
 }
 
 // Only codes are selectable, A toggles, and an exclusive group keeps one on.
@@ -877,7 +925,408 @@ void test_preview_shows_the_thumbnail() {
 }
 
 // ---------------------------------------------------------------------------
+// The Shortcuts page
+
+namespace sc = ds::sdl::minui_shortcuts;
+
+// Options rows with a pad: Shortcuts follows Controls.
+constexpr int kShortcutsRow = kControls + 1;
+
+int shortcut_row(const char* key) {
+  for (int i = 0; i < sc::kShortcutCount; ++i)
+    if (std::strcmp(sc::kShortcuts[i].key, key) == 0) return i + 1;   // row 0 is the modifier
+  CHECK(false);
+  return 0;
+}
+
+// Onto the Shortcuts page, then down to `key`'s row (nullptr: the modifier).
+void to_shortcut(MinUiMenu& m, const char* key) {
+  to_options(m, kShortcutsRow);
+  m.input(press(B::BTN_A));
+  CHECK(m.page() == Page::Shortcuts);
+  const int row = key ? shortcut_row(key) : 0;
+  for (int i = 0; i < row; ++i) m.input(press(B::BTN_DOWN));
+}
+
+std::string pad_hot(FakeHost& h, const char* key) { return h.kv[std::string("padhotkeys.") + key]; }
+
+// Only with a pad: every chord is a pad chord.
+void test_shortcuts_need_a_pad() {
+  FakeHost h;
+  MinUiMenu m(true);
+  m.set_settings_host(&h);
+  to_options(m, kShortcutsRow);
+  m.input(press(B::BTN_A));
+  CHECK(m.page() == Page::Settings);                                 // DS Options moved up
+  h.pad = true;
+  to_options(m, kShortcutsRow);
+  m.input(press(B::BTN_A));
+  CHECK(m.page() == Page::Shortcuts);
+}
+
+// NextUI's binding: A listens, the next button is bound, alone or with the
+// modifier held, and the cursor moves on. X clears and moves on too.
+void test_shortcuts_bind() {
+  FakeHost h;
+  h.pad = true;
+  MinUiMenu m(true);
+  m.set_settings_host(&h);
+  to_shortcut(m, "save_state");
+  m.input(press(B::BTN_A));
+  CHECK(h.capturing_);
+  draw_everywhere(m, "the shortcuts page, listening");
+  m.input(0);                                                        // nothing pressed yet
+  CHECK(h.capturing_);
+  h.pending = "mod+x";
+  m.input(0);
+  CHECK(pad_hot(h, "save_state") == "mod+x");
+  CHECK(!h.capturing_);
+  m.input(press(B::BTN_A));                                          // on to Load state
+  h.pending = "+righttrigger";
+  m.input(0);
+  CHECK(pad_hot(h, "load_state") == "+righttrigger");
+  // Clear is the north button by position, and moves on as well.
+  to_shortcut(m, "screenshot");
+  m.face_presses(1u << 3);
+  m.input(0);
+  CHECK(pad_hot(h, "screenshot") == "none");
+  m.face_presses(1u << 3);
+  m.input(0);
+  CHECK(pad_hot(h, "fps") == "none");
+  // Left and right leave a shortcut alone; they are the modifier row's.
+  const size_t writes = h.writes.size();
+  to_shortcut(m, "quit");
+  m.input(press(B::BTN_LEFT));
+  m.input(press(B::BTN_RIGHT));
+  CHECK(h.writes.size() == writes);
+  draw_everywhere(m, "the shortcuts page");
+  for (int i = 0; i < 20; ++i) m.input(press(B::BTN_DOWN));
+  draw_everywhere(m, "the shortcuts page, scrolled");
+}
+
+// How a binding reads: the modifier by its label, a trigger's axis as the
+// trigger, anything unknown in capitals.
+void test_shortcuts_labels() {
+  FakeHost h;
+  h.pad = true;
+  MinUiMenu m(true);
+  m.set_settings_host(&h);
+  CHECK(m.binding_label("mod+rightshoulder") == "MENU+R1");
+  CHECK(m.binding_label("mod++lefttrigger") == "MENU+L2");
+  CHECK(m.binding_label("+righttrigger") == "R2");
+  CHECK(m.binding_label("mod+-leftx") == "MENU+LS LEFT");
+  CHECK(m.binding_label("mod") == "MENU");
+  CHECK(m.binding_label("mod+start+back") == "MENU+START+SELECT");
+  CHECK(m.binding_label("dpup") == "UP");
+  CHECK(m.binding_label("none") == "NONE");
+  CHECK(m.binding_label("") == "NONE");
+  CHECK(m.binding_label("mod+misc2") == "MENU+MISC2");
+  // Face buttons by position, named as on a Nintendo-layout pad.
+  CHECK(m.binding_label("a") == "B");
+  CHECK(m.binding_label("b") == "A");
+  CHECK(m.binding_label("x") == "Y");
+  CHECK(m.binding_label("y") == "X");
+  h.kv["padhotkeys.modifier"] = "back";
+  CHECK(m.binding_label("mod+y") == "SELECT+X");
+  // The Brick's F1 and F2 are SDL's sticks, and go by the device's names.
+  m.set_button_labels("leftstick=F1 rightstick=F2 bad =X Y=");
+  CHECK(m.binding_label("mod+leftstick") == "SELECT+F1");
+  CHECK(m.binding_label("rightstick") == "F2");
+  CHECK(m.binding_label("bad") == "BAD");
+  h.kv["padhotkeys.modifier"] = "rightstick";
+  CHECK(m.binding_label("mod+a") == "F2+B");
+  m.set_button_labels("");
+  CHECK(m.binding_label("mod+a") == "R3+B");
+}
+
+// The Controls page's pad values, which upstream spells with a position pip
+// our font cannot draw, read as the Shortcuts page's do.
+void test_controls_labels() {
+  FakeHost h;
+  h.pad = true;
+  MinUiMenu m(true);
+  m.set_settings_host(&h);
+  CHECK(m.controls_label("\x02 EAST") == "A");
+  CHECK(m.controls_label("\x01 SOUTH") == "B");
+  CHECK(m.controls_label("\x03 WEST") == "Y");
+  CHECK(m.controls_label("\x04 NORTH") == "X");
+  CHECK(m.controls_label("FUNC BTN") == "MENU");
+  CHECK(m.controls_label("MOD+\x02 EAST") == "MENU+A");
+  CHECK(m.controls_label("MOD++LEFTX") == "MENU++LEFTX");
+  CHECK(m.controls_label("MOD+START+SELECT") == "MENU+START+SELECT");
+  CHECK(m.controls_label("LEFT STICK") == "LEFT STICK");
+  CHECK(m.controls_label("NONE") == "NONE");
+  h.kv["padhotkeys.modifier"] = "back";
+  m.set_button_labels("leftstick=F1");
+  CHECK(m.controls_label("MOD+L3") == "SELECT+F1");
+}
+
+// The pause chord and its alternate cannot both be cleared: nothing else
+// opens the menu.
+void test_shortcuts_keep_a_way_in() {
+  FakeHost h;
+  h.pad = true;
+  h.kv["padhotkeys.pause"] = "mod+y";
+  h.kv["padhotkeys.pause.alt"] = "mod";
+  MinUiMenu m(true);
+  m.set_settings_host(&h);
+  to_shortcut(m, "pause.alt");
+  m.face_presses(1u << 3);
+  m.input(0);
+  CHECK(pad_hot(h, "pause.alt") == "none");                         // the chord is still bound
+  to_shortcut(m, "pause");
+  m.face_presses(1u << 3);
+  m.input(0);
+  CHECK(pad_hot(h, "pause") == "mod+y");                            // refused
+  draw_everywhere(m, "the shortcuts page, refusing");
+  to_shortcut(m, "pause.alt");
+  m.input(press(B::BTN_A));
+  h.pending = "mod";
+  m.input(0);
+  CHECK(pad_hot(h, "pause.alt") == "mod");
+  to_shortcut(m, "pause");
+  m.face_presses(1u << 3);
+  m.input(0);
+  CHECK(pad_hot(h, "pause") == "none");                             // the tap is back, so it may go
+}
+
+// The modifier steps through what the pad mapping names.
+void test_shortcuts_modifier() {
+  FakeHost h;
+  h.pad = true;
+  MinUiMenu m(true);
+  m.set_settings_host(&h);
+  m.set_pad_buttons({"a", "b", "back", "guide", "start", "dpup"});
+  to_shortcut(m, nullptr);
+  m.input(press(B::BTN_RIGHT));
+  CHECK(pad_hot(h, "modifier") == "back");
+  draw_everywhere(m, "the shortcuts page, SELECT as the modifier");
+  m.input(press(B::BTN_RIGHT));
+  CHECK(pad_hot(h, "modifier") == "start");
+  m.input(press(B::BTN_RIGHT));                                      // wraps: L3 and the rest are not mapped
+  CHECK(pad_hot(h, "modifier") == "guide");
+  m.input(press(B::BTN_LEFT));
+  CHECK(pad_hot(h, "modifier") == "start");
+  m.input(press(B::BTN_A));                                          // A steps it too, never listens
+  CHECK(pad_hot(h, "modifier") == "guide");
+  CHECK(!h.capturing_);
+  // With no mapping known, the modifier stays where it is.
+  FakeHost bare;
+  bare.pad = true;
+  MinUiMenu n(true);
+  n.set_settings_host(&bare);
+  n.set_pad_buttons({});
+  to_shortcut(n, nullptr);
+  n.input(press(B::BTN_RIGHT));
+  CHECK(bare.writes.empty());
+}
+
+// Y twice restores the device's profile; without one, every chord.
+void test_shortcuts_defaults() {
+  const std::string profile = scratch("no-sticks.ini");
+  write_text(profile, "[pad]\nstylus_dpad = +righttrigger\n\n[padhotkeys]\n# a comment\nquit = mod+a\n"
+                      "pause = mod+y\npause.alt = mod\nsave_state = none\nslot_next = none\n\n[cheevos]\nquit = x\n");
+  FakeHost h;
+  h.pad = true;
+  h.kv["padhotkeys.modifier"] = "back";
+  h.kv["padhotkeys.save_state"] = "mod+x";
+  MinUiMenu m(true);
+  m.set_settings_host(&h);
+  m.set_profile(profile);
+  to_shortcut(m, "quit");
+  m.face_presses(1u << 2);                                           // west, armed
+  m.input(0);
+  CHECK(pad_hot(h, "save_state") == "mod+x");
+  draw_everywhere(m, "the shortcuts page, Defaults armed");
+  m.face_presses(1u << 2);
+  m.input(0);
+  CHECK(pad_hot(h, "modifier") == "guide");
+  CHECK(pad_hot(h, "save_state") == "none");
+  CHECK(pad_hot(h, "slot_next") == "none");
+  CHECK(pad_hot(h, "quit") == "mod+a");                              // [cheevos] is not [padhotkeys]
+  CHECK(pad_hot(h, "load_state") == "mod+leftshoulder");             // the profile leaves it out
+  // Any other press backs out of an armed Defaults, and does only that.
+  h.kv["padhotkeys.quit"] = "none";
+  m.face_presses(1u << 2);
+  m.input(0);
+  m.face_presses(1u << 3);
+  m.input(0);
+  m.face_presses(1u << 2);
+  m.input(0);
+  CHECK(pad_hot(h, "quit") == "none");
+  // No profile: every chord.
+  FakeHost g;
+  g.pad = true;
+  MinUiMenu n(true);
+  n.set_settings_host(&g);
+  n.set_profile(scratch("missing.ini"));
+  to_shortcut(n, nullptr);
+  n.face_presses(1u << 2);
+  n.input(0);
+  n.face_presses(1u << 2);
+  n.input(0);
+  for (int i = 0; i < sc::kShortcutCount; ++i) CHECK(pad_hot(g, sc::kShortcuts[i].key) == sc::kShortcuts[i].chord);
+}
+
+// ---------------------------------------------------------------------------
+// The pad's mapping, put together from SDL's GUID and the pak's bodies
+
+namespace pad = ds::sdl::minui_pad;
+
+void test_pad_mapping() {
+  const std::string body = "a:b1,b:b0,guide:b8,lefttrigger:a2,dpup:h0.1";
+  const std::string fixed = "a:b3,b:b4,guide:b11";
+  const std::string fixed_guid = "19000000010000000100000000016e01";
+  // The GUID in front, the name, the body, and the platform.
+  pad::Mapping m = pad::choose("0300a3845e0400008e02000014010000", "Xbox 360 Controller", body, "", fixed_guid);
+  CHECK(m.sdl == "0300a3845e0400008e02000014010000,Xbox 360 Controller," + body + ",platform:Linux");
+  CHECK(m.buttons == "a b guide lefttrigger dpup");
+  CHECK(!m.fixed);
+  // NextUI's fixed h700 layout takes the other body, and only by its GUID.
+  m = pad::choose(fixed_guid, "ANBERNIC-keys", body, fixed, fixed_guid);
+  CHECK(m.fixed);
+  CHECK(m.sdl == fixed_guid + ",ANBERNIC-keys," + fixed + ",platform:Linux");
+  CHECK(m.buttons == "a b guide");
+  m = pad::choose("19000000010000000100000000010000", "ANBERNIC-keys", body, fixed, fixed_guid);
+  CHECK(!m.fixed);
+  CHECK(m.buttons == "a b guide lefttrigger dpup");
+  // Off h700 there is no fixed body, so the GUID changes nothing.
+  m = pad::choose(fixed_guid, "Pad", body, "", fixed_guid);
+  CHECK(!m.fixed);
+  CHECK(m.buttons == "a b guide lefttrigger dpup");
+  // A comma in the name would end its field; no name at all gets one.
+  CHECK(pad::choose("00ff", "Pad, wired", "a:b1", "", "").sdl == "00ff,Pad wired,a:b1,platform:Linux");
+  CHECK(pad::choose("00ff", "", "a:b1", "", "").sdl == "00ff,Controller,a:b1,platform:Linux");
+  // No body or no GUID: nothing, rather than a mapping SDL would refuse.
+  CHECK(pad::choose("00ff", "Pad", "", "", "").sdl.empty());
+  CHECK(pad::choose("", "Pad", body, "", "").sdl.empty());
+  CHECK(pad::choose("", "Pad", body, "", "").buttons.empty());
+}
+
+// ---------------------------------------------------------------------------
+// The screenshot's name: NextUI's getDisplayName, then its map.txt alias
+
+void test_display_name() {
+  using M = MinUiMenu;
+  CHECK(M::display_name("") == "");
+  CHECK(M::display_name("/Roms/DS (DSP)/Mario Kart DS (USA, Australia) (En,Fr,De,Es,It).nds") == "Mario Kart DS");
+  // Everything from the first ( on, not just the trailing groups.
+  CHECK(M::display_name("/r/Game (USA) Extra.nds") == "Game");
+  CHECK(M::display_name("/r/Game [!] (USA).nds") == "Game");
+  // Stacked short extensions go; a long "extension" is part of the name.
+  CHECK(M::display_name("/r/Beckon the Hellspawn.p8.png") == "Beckon the Hellspawn");
+  CHECK(M::display_name("/r/Dr. Mario.nds") == "Dr. Mario");
+  // A name that is all tags keeps itself rather than vanishing.
+  CHECK(M::display_name("/r/(Prototype).nds") == "(Prototype)");
+  CHECK(M::display_name("/r/Title  .nds") == "Title");
+  // map.txt beside the ROM: tab separated, exact filename, CRLF tolerated.
+  const std::string dir = scratch("Roms");
+  ::mkdir(dir.c_str(), 0755);
+  write_text(dir + "/map.txt", "Other.nds\tNot This\r\nPokemon - Black (USA).nds\tPokemon Black\r\nPokemon - Black (USA).nd\tNo\r\n");
+  CHECK(M::display_name(dir + "/Pokemon - Black (USA).nds") == "Pokemon Black");
+  CHECK(M::display_name(dir + "/Pokemon - White (USA).nds") == "Pokemon - White");
+}
+
+void test_screenshot_notice_switch() {
+  ::unsetenv("MINUI_NOTIFY_SCREENSHOT");
+  CHECK(MinUiMenu(true).notify_screenshots());
+  ::setenv("MINUI_NOTIFY_SCREENSHOT", "0", 1);
+  CHECK(!MinUiMenu(true).notify_screenshots());
+  ::setenv("MINUI_NOTIFY_SCREENSHOT", "1", 1);
+  CHECK(MinUiMenu(true).notify_screenshots());
+  ::unsetenv("MINUI_NOTIFY_SCREENSHOT");
+  CHECK(!MinUiMenu(false).notify_screenshots());                     // no launcher, no notice
+}
+
+// ---------------------------------------------------------------------------
+// The notice
+
+void test_notice_timing() {
+  MinUiMenu m(true);
+  m.set_theme(gfx::Theme{});
+  CHECK(!m.notice_on(0));
+  m.notify("LAYOUT: PIP", 1000);
+  CHECK(m.notice_on(1000));
+  CHECK(m.notice_on(1000 + MinUiMenu::kNoticeHoldMs + MinUiMenu::kNoticeFadeMs - 1));
+  CHECK(!m.notice_on(1000 + MinUiMenu::kNoticeHoldMs + MinUiMenu::kNoticeFadeMs));
+  // A desktop build has no launcher and no notice.
+  MinUiMenu off(false);
+  off.notify("LAYOUT: PIP", 1000);
+  CHECK(!off.notice_on(1000));
+  std::vector<u32> px(64 * 48, 0);
+  CHECK(off.draw_notice(ds::sdl::Canvas{px.data(), 64, 64, 48}, 1000).w == 0);
+}
+
+// Opaque while it holds, half there half way through the fade, then gone;
+// on an overlay cleared to 0 the fade is in the alpha, not blended to black.
+void test_notice_fades() {
+  MinUiMenu m(true);
+  m.set_theme(gfx::Theme{});
+  m.notify("LAYOUT: DOMINANT V", 0);
+  const u32 hold = MinUiMenu::kNoticeHoldMs, fade = MinUiMenu::kNoticeFadeMs;
+  Guarded a(640, 480);
+  const ds::sdl::Rect r = m.draw_notice(a.canvas(), hold);
+  CHECK(r.w > 0 && r.h > 0);
+  CHECK(r.x + r.w / 2 >= 319 && r.x + r.w / 2 <= 321);               // centred
+  const int cy = r.y + r.h / 2, cx = r.x + r.h / 4;                  // in the pill, left of the text
+  CHECK((a.at(cx, cy) >> 24) == 0xFF);
+  Guarded b(640, 480);
+  m.draw_notice(b.canvas(), hold + fade / 2);
+  const u32 half = b.at(cx, cy) >> 24;
+  CHECK(half >= 0x70 && half <= 0x90);
+  Guarded c(640, 480);
+  CHECK(m.draw_notice(c.canvas(), hold + fade).w == 0);
+  CHECK(!c.drew());
+}
+
+void test_notice_bounds() {
+  MinUiMenu m(true);
+  m.set_theme(gfx::Theme{});
+  m.notify("A NOTICE FAR TOO LONG FOR ANY PANEL THIS PAK RUNS ON, LET ALONE THE DS SCREEN", 0);
+  const int sizes[][2] = {{256, 192}, {640, 480}, {720, 720}, {1024, 768}, {1280, 720}};
+  for (const auto& s : sizes) {
+    for (u32 t : {0u, MinUiMenu::kNoticeHoldMs + MinUiMenu::kNoticeFadeMs / 3}) {
+      Guarded g(s[0], s[1]);
+      const ds::sdl::Rect r = m.draw_notice(g.canvas(), t);
+      CHECK(g.guard_intact());
+      CHECK(g.drew());
+      CHECK(r.x >= 0 && r.y >= 0 && r.x + r.w <= s[0] && r.y + r.h <= s[1]);
+    }
+  }
+}
+
+void test_setting_notice() {
+  CHECK(MinUiMenu::setting_notice("video.layout", "dominant_v") == "LAYOUT: DOMINANT V");
+  CHECK(MinUiMenu::setting_notice("video.screen", "bottom") == "MAIN SCREEN: BOTTOM");
+  CHECK(MinUiMenu::setting_notice("video.pip_corner", "tr") == "PIP CORNER: TOP RIGHT");
+  CHECK(MinUiMenu::setting_notice("video.nothing", "pip") == "pip");
+}
+
+// ---------------------------------------------------------------------------
 // The pieces
+
+// A painter's alpha scales fills, plots and text alike.
+void test_painter_alpha() {
+  std::vector<u32> px(8 * 8, 0);
+  gfx::Painter p(ds::sdl::Canvas{px.data(), 8, 8, 8});
+  p.set_alpha(128);
+  p.fill(0, 0, 2, 2, gfx::kWhite);
+  CHECK(px[0] == 0x80FFFFFF);
+  p.plot(4, 4, gfx::kWhite);
+  CHECK(px[4 * 8 + 4] == 0x80FFFFFF);
+  p.set_alpha(0);
+  p.fill(6, 6, 2, 2, gfx::kWhite);
+  CHECK(px[6 * 8 + 6] == 0);
+  // The bitmap font's fallback writes opaque pixels, so a faded line goes
+  // through a scratch canvas; it must come out partial too.
+  std::vector<u32> tx(100 * 40, 0);
+  gfx::Painter q(ds::sdl::Canvas{tx.data(), 100, 100, 40});
+  q.set_alpha(128);
+  gfx::Font f;
+  f.draw(q, 2, 2, 16, gfx::kWhite, "OK");
+  CHECK(std::count(tx.begin(), tx.end(), 0x80FFFFFFu) > 0);
+  CHECK(std::count(tx.begin(), tx.end(), gfx::kWhite) == 0);
+}
 
 void test_blend() {
   // Opaque wins outright, transparent leaves the destination alone.
@@ -1023,6 +1472,7 @@ int main() {
   test_commit_on_closing();
   test_controls();
   test_controls_by_position_on_a_pad();
+  test_controls_hides_shortcuts();
   test_cheats();
   test_achievements();
   test_text_editor();
@@ -1034,6 +1484,21 @@ int main() {
   test_list_titles_are_not_cut();
   test_battery_pill();
   test_preview_shows_the_thumbnail();
+  test_shortcuts_need_a_pad();
+  test_shortcuts_bind();
+  test_shortcuts_labels();
+  test_controls_labels();
+  test_shortcuts_keep_a_way_in();
+  test_shortcuts_modifier();
+  test_shortcuts_defaults();
+  test_pad_mapping();
+  test_display_name();
+  test_screenshot_notice_switch();
+  test_notice_timing();
+  test_notice_fades();
+  test_notice_bounds();
+  test_setting_notice();
+  test_painter_alpha();
   test_blend();
   test_decode_png_and_bmp();
   test_battery();
