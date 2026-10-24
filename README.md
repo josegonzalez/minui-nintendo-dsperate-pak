@@ -84,6 +84,7 @@ The pause menu's Options > Shortcuts page changes any of these the way NextUI's 
 - Save state, load state and the state slot
 - Hold to blow into the mic
 - Close or open the lid
+- Next and previous colour, and next and previous pattern, which show the new one at the top of the screen and are remembered for that game (see [Visual FX and shaders](#visual-fx-and-shaders))
 
 The Brick's F1 and F2 can also be bound on the Shortcuts page, or picked as the modifier instead of MENU.
 
@@ -104,6 +105,48 @@ The pause menu looks and works like the one every other system on the card uses:
 On NextUI the menu follows the theme colours and font chosen in NextUI's settings. On MinUI it uses MinUI's own look.
 
 The MENU tap is `pause.alt = mod` in the `[padhotkeys]` section of the config. Configs from earlier versions of this pak gain that line on the next launch. Set it to `none` to keep MENU for chords only.
+
+## Visual FX and shaders
+
+Options > Visual FX has two rows for the screen shaders of [rgds-core](https://github.com/kleinrein/rgds-core), and the libretro ones it ships:
+
+- COLOUR: another screen's colours, or a mood. `nds`, `natural_vision`, `nds_natural_vision`, `ds_classic`, `ds_lite`, `natural`, `vivid`, `bold`, `gba`, `warm_paper`, `cool_crisp`, `pocket_green` and `amber`. It works on every device.
+- PATTERN: what each DS pixel looks like on the panel. `sharp_bilinear`, `lcd`, `zfast_lcd`, `scanlines`, `soft_grid`, `ds_classic`, `ds_lite`, `gba`, `rgb_stripes`, `beads` and `tiles`. It needs a screen shown larger than the DS's own, and fades in between one and two times the size, as rgds-core's do.
+
+Where a device's display engine scales the picture in hardware, PATTERN offers only `lcd`, `zfast_lcd`, `scanlines` and `soft_grid`, the ones that only darken, drawn over the picture by the display engine. BILINEAR and CHUNKY take precedence over PATTERN, and a PATTERN takes the place of LCD GRID and SEAM. The page says why when a row is off.
+
+COLOUR changes the picture behind the menu as soon as it is picked, and PATTERN when the menu closes. Save Changes decides whether they apply to every game or only this one. Screenshots, save states and the game switcher's pictures keep the game's own colours.
+
+They are `colour` and `pattern` in the `[video]` section of `dsperate.ini`. An unknown name is read as `off`.
+
+rgds-core and libretro name their presets differently. In these two rows they are:
+
+| Preset | COLOUR | PATTERN |
+| --- | --- | --- |
+| DS Classic | `ds_classic` | `ds_classic` |
+| DS Lite | `ds_lite` | `ds_lite` |
+| GBA Color | `gba` | `off` |
+| GBA screen | `gba` | `gba` |
+| Pixel beads | `bold` | `beads` |
+| Glossy tiles | `bold` | `tiles` |
+| Vivid LCD | `vivid` | `rgb_stripes` |
+| Soft scanlines | `off` | `scanlines` |
+| Soft LCD grid | `off` | `soft_grid` |
+| Warm paper, Cool crisp, Pocket green, Amber | `warm_paper`, `cool_crisp`, `pocket_green`, `amber` | `off` |
+| Natural glow, Natural smooth | `natural` | `off` |
+| Vivid smooth | `vivid` | `off` |
+| NDS Color | `nds` | `off` |
+| Natural Vision | `natural_vision` | `off` |
+| LCD1x, zFast LCD, Sharp bilinear | `off` | `lcd`, `zfast_lcd`, `sharp_bilinear` |
+| LCD1x, zFast LCD or Sharp bilinear + NDS Color | `nds` | `lcd`, `zfast_lcd` or `sharp_bilinear` |
+| LCD1x, zFast LCD or Sharp bilinear + Natural Vision | `natural_vision` | `lcd`, `zfast_lcd` or `sharp_bilinear` |
+| LCD1x, zFast LCD or Sharp bilinear + both colours | `nds_natural_vision` | `lcd`, `zfast_lcd` or `sharp_bilinear` |
+
+Four of them are not exactly rgds-core's:
+
+- Natural glow, Natural smooth and Vivid smooth keep their colours only. The glow and the smoothed diagonals read the neighbouring pixels, which these rows do not.
+- Vivid LCD keeps its stripes on the brightest colours, where rgds-core fades them out.
+- zFast LCD's gamma darkens a pixel before its border does rather than after, which only changes the border.
 
 ## Saves & States
 
@@ -144,6 +187,7 @@ These lines in that log are worth knowing:
 - `resume state <path> not found, falling back to autoload` means RESUME in the game switcher asked for a save state slot that no longer exists, so the game started from its last autosave instead.
 - `resume state <path> predates this DSperate (format N, needs M), falling back to autoload` means the slot RESUME asked for was saved by an older DSperate that wrote a format this one cannot read, so the game started from its last autosave instead.
 - `state: no state in slot` or `state: cannot load ...` means DSperate refused the state RESUME asked for. The pak exits back to the launcher rather than starting the game from a state it cannot read.
+- `shader timing: colour <name> <us>/frame, pattern <name> <us>/frame` lines, every five seconds, say what COLOUR and PATTERN cost each frame, averaged. They are only written while an empty `shader-timing.txt` sits in `/.userdata/$PLATFORM/DSP-dsperate/`. Unlike `probe.txt` it stays there until you remove it.
 - `timing: <seconds> <step>` lines mark the launch, the config being ready, the launcher's look being read, the pad mapping, the emulator starting, the game running, quitting, the state being saved, the emulator exiting and the card being synced. The seconds count from when the device booted, so the gap between two lines is how long that step took.
 
 To find the numbers of buttons the pak does not use yet, create an empty `probe.txt` in `/.userdata/$PLATFORM/DSP-dsperate/` and launch a game. For the first 15 seconds, before the game appears, press each button once. Every press is written to the log as a `probe:` line, and `probe.txt` is removed so the next launch is a normal one.
@@ -153,7 +197,7 @@ To find the numbers of buttons the pak does not use yet, create an empty `probe.
 - `make build` cross-compiles DSperate for all three platforms and runs the upstream unit tests. If Docker runs out of memory, `make build JOBS=4` limits how many compile and link jobs run at once.
 - `make test` runs the [bats](https://github.com/bats-core/bats-core) suite in `tests/`.
 - `make lint` runs shellcheck and shfmt.
-- `make screenshots` draws every page of the pause menu, in the MinUI and NextUI looks and at every panel size the pak supports, into `build/screenshots/`. No device is needed.
+- `make screenshots` draws every page of the pause menu, in the MinUI and NextUI looks and at every panel size the pak supports, and a test screen through every shader preset, into `build/screenshots/`. No device is needed.
 - `make release` produces `dist/DSP.pak.zip`.
 
 A scheduled workflow opens a pull request when DSperate publishes a new release. See "Bumping the upstream version" in TECHNICAL.md.
@@ -163,8 +207,9 @@ See [TECHNICAL.md](TECHNICAL.md) for the build pipeline, the ABI floors, the too
 ## Credits
 
 - @beebono for DSperate
+- kleinrein for rgds-core's screen shaders, and jdgleaver, Gigaherz, Greg Hogan, hunterk, Pokefan531, Themaister, ShadX, Hyllian and Sp00kyFox for the shaders it ships. See `THIRD_PARTY.md`.
 - anyone else I'm missing
 
 ## License
 
-This pak is MIT licensed. The bundled DSperate binaries are GPLv3 — see `LICENSE.DSperate` in the release, and `dsperate.build-info` for the exact upstream commit and build flags they were produced from.
+This pak is MIT licensed. The bundled DSperate binaries are GPLv3 — see `LICENSE.DSperate` in the release, and `dsperate.build-info` for the exact upstream commit and build flags they were produced from. `THIRD_PARTY.md`, also in the release, lists the shaders the Visual FX rows are ported from and their licences.

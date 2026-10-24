@@ -124,6 +124,10 @@ public:
   // "LAYOUT: DOMINANT V": the row's label and the value's own label, from
   // the settings tables the Layout page shows, or the raw value.
   static std::string setting_notice(const char* key, const std::string& value);
+  // A COLOUR or PATTERN value measured too slow on this platform: launch.sh
+  // exports config/platform.sh's list as MINUI_SLOW_SHADERS, "colour:<name>"
+  // and "pattern:<name>" separated by spaces. Still offered; the page says so.
+  static bool slow_on_device(const char* key, const std::string& value);
   // Whether a screenshot should say so: NextUI's notifyScreenshot, passed on
   // by launch.sh as MINUI_NOTIFY_SCREENSHOT. On unless it is "0".
   bool notify_screenshots() const { return active_ && notify_screenshot_; }

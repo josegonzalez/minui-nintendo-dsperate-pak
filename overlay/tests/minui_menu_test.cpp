@@ -518,7 +518,8 @@ void test_controls_hides_shortcuts() {
   h.pad_keys = {"pad.a", "padhotkeys.modifier", "padhotkeys.quit", "padhotkeys.pause.alt",
                 "padhotkeys.fast_forward", "padhotkeys.mute", "padhotkeys.fullscreen",
                 "padhotkeys.volume_down.alt", "padhotkeys.lid.alt", "padhotkeys.quit.alt",
-                "padhotkeys.screen_swap.alt", "padhotkeys.fullscreen.alt", "pad.b"};
+                "padhotkeys.screen_swap.alt", "padhotkeys.fullscreen.alt", "padhotkeys.colour_next",
+                "padhotkeys.pattern_prev.alt", "pad.b"};
   h.rows = static_cast<int>(h.pad_keys.size());
   MinUiMenu m(true);
   m.set_settings_host(&h);
@@ -540,6 +541,8 @@ void test_controls_hides_shortcuts() {
   CHECK(!h.kv.count("padhotkeys.lid.alt"));
   CHECK(!h.kv.count("padhotkeys.quit.alt"));
   CHECK(!h.kv.count("padhotkeys.screen_swap.alt"));
+  CHECK(!h.kv.count("padhotkeys.colour_next"));
+  CHECK(!h.kv.count("padhotkeys.pattern_prev.alt"));
   draw_everywhere(m, "the controls page without shortcuts");
   // The keyboard column keeps its chords.
   m.input(press(B::BTN_L));
@@ -1302,6 +1305,59 @@ void test_setting_notice() {
   CHECK(MinUiMenu::setting_notice("video.nothing", "pip") == "pip");
 }
 
+// The pak's COLOUR and PATTERN rows come up on the Visual FX page, step from
+// off, and say when the value is one this device is too slow for, while
+// still letting it be picked. The four shortcuts that step them ship unbound.
+void test_shader_rows() {
+  int colour = -1;
+  for (int i = 0; ds::sdl::kVideoSettings[i].key; ++i)
+    if (!std::strcmp(ds::sdl::kVideoSettings[i].key, "video.colour")) colour = i;
+  CHECK(colour > 0);
+  CHECK(!std::strcmp(ds::sdl::kVideoSettings[colour - 1].key, "video.linear"));
+  CHECK(!std::strcmp(ds::sdl::kVideoSettings[colour + 1].key, "video.pattern"));
+  FakeHost h;
+  MinUiMenu m(true);
+  m.set_settings_host(&h);
+  to_options(m, kVisualFx);
+  m.input(press(B::BTN_A));
+  for (int i = 0; i < colour; ++i) m.input(press(B::BTN_DOWN));
+  m.input(press(B::BTN_RIGHT));
+  CHECK(h.kv["video.colour"] == "nds");
+  m.input(press(B::BTN_DOWN));
+  m.input(press(B::BTN_RIGHT));
+  CHECK(h.kv["video.pattern"] == "sharp_bilinear");
+  draw_everywhere(m, "the visual fx page with a pattern");
+  // A switched-off PATTERN row is still drawn, and does not step.
+  h.off["video.pattern"] = true;
+  m.input(press(B::BTN_RIGHT));
+  CHECK(h.kv["video.pattern"] == "sharp_bilinear");
+  draw_everywhere(m, "the visual fx page with the pattern off");
+
+  unsetenv("MINUI_SLOW_SHADERS");
+  CHECK(!MinUiMenu::slow_on_device("video.colour", "nds"));
+  setenv("MINUI_SLOW_SHADERS", "colour:nds pattern:beads", 1);
+  CHECK(MinUiMenu::slow_on_device("video.colour", "nds"));
+  CHECK(MinUiMenu::slow_on_device("video.pattern", "beads"));
+  CHECK(!MinUiMenu::slow_on_device("video.pattern", "nds"));
+  CHECK(!MinUiMenu::slow_on_device("video.colour", "gba"));
+  CHECK(!MinUiMenu::slow_on_device("emu.speed", "nds"));
+  m.input(press(B::BTN_UP));
+  m.input(press(B::BTN_LEFT));
+  m.input(press(B::BTN_RIGHT));
+  CHECK(h.kv["video.colour"] == "nds");   // offered all the same
+  draw_everywhere(m, "a value too slow for the device");
+  unsetenv("MINUI_SLOW_SHADERS");
+
+  for (const char* key : {"colour_next", "colour_prev", "pattern_next", "pattern_prev"}) {
+    bool found = false;
+    for (const auto& s : ds::sdl::minui_shortcuts::kShortcuts)
+      if (!std::strcmp(s.key, key)) { found = true; CHECK(!std::strcmp(s.chord, "none") && !std::strcmp(s.upstream, "none")); }
+    CHECK(found);
+  }
+  CHECK(MinUiMenu::setting_notice("video.colour", "ds_classic") == "COLOUR: DS CLASSIC");
+  CHECK(MinUiMenu::setting_notice("video.pattern", "scanlines") == "PATTERN: SCANLINES");
+}
+
 // ---------------------------------------------------------------------------
 // The pieces
 
@@ -1498,6 +1554,7 @@ int main() {
   test_notice_fades();
   test_notice_bounds();
   test_setting_notice();
+  test_shader_rows();
   test_painter_alpha();
   test_blend();
   test_decode_png_and_bmp();

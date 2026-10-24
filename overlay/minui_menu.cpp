@@ -43,6 +43,7 @@ int table_of(char c) {
   return 0;
 }
 
+
 const char* const kSettingsTitles[4] = {"Emulation", "Visual FX", "Layout", "DS Options"};
 
 // Filled, unsmoothed: the battery's bolt and the list's scroll arrows are a
@@ -1340,7 +1341,8 @@ void MinUiMenu::draw_settings(Painter& p, const Metrics& m) const {
     // What it takes to see a change, as upstream's page says it.
     std::string when;
     if (host_->enabled(cur)) {
-      if (cur.flags & FlagRestart) when = "RESTART REQUIRED";
+      if (slow_on_device(cur.key, host_->get(cur.key))) when = "SLOW ON THIS DEVICE";
+      else if (cur.flags & FlagRestart) when = "RESTART REQUIRED";
       else if (cur.flags & FlagDeferred) when = "APPLIED WHEN THE MENU CLOSES";
       if (!when.empty() && set_table_ == 3)
         if (const char* src = host_->user_settings_note()) { when += " - "; when += src; }
@@ -1447,6 +1449,15 @@ Rect MinUiMenu::draw_notice(const Canvas& d, u32 now_ms) const {
   font_->draw(p, x + bp, y + (h - font_->line_height(px)) / 2, px, theme_.title_text(), shown);
   const int x0 = std::max(0, x), y0 = std::max(0, y);
   return Rect{x0, y0, std::min(d.w, x + w) - x0, std::min(d.h, y + h) - y0};
+}
+
+bool MinUiMenu::slow_on_device(const char* key, const std::string& value) {
+  const char* list = std::getenv("MINUI_SLOW_SHADERS");
+  if (!list || !*list || value.empty() || std::strncmp(key, "video.", 6) != 0) return false;
+  const std::string want = std::string(key + 6) + ":" + value;
+  std::istringstream in(list);
+  for (std::string word; in >> word;) if (word == want) return true;
+  return false;
 }
 
 std::string MinUiMenu::setting_notice(const char* key, const std::string& value) {

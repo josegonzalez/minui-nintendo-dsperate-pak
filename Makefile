@@ -76,8 +76,9 @@ CROSS   := aarch64-nextui-linux-gnu-
 # The vendored MinUI sources the clone rule copies into src/frontend/sdl/, and
 # the ctest suite it copies into tests/. stb_*.h are nothings/stb, unmodified.
 MINUI_OVERLAY := minui.h minui.cpp minui_gfx.h minui_gfx.cpp minui_menu.h minui_menu.cpp \
-	minui_pad.h minui_shortcuts.h minui_stb.cpp stb_image.h stb_truetype.h
-MINUI_OVERLAY_TESTS := minui_menu_test.cpp
+	minui_pad.h minui_shader.h minui_shader.cpp minui_shader_presets.h minui_shortcuts.h minui_stb.cpp \
+	stb_image.h stb_truetype.h
+MINUI_OVERLAY_TESTS := minui_menu_test.cpp minui_shader_test.cpp
 
 DOCKER_SCRIPT := /build/scripts/docker-env.sh
 DOCKER_RUN_tg5040 := docker run --rm -v $(ROOT):/build $(TG5040_IMAGE) $(DOCKER_SCRIPT)
@@ -264,11 +265,13 @@ screenshots: clone verify-pin
 	  fetch "$(NEXTUI_FONT_URL)" $$F/font1.ttf; \
 	  cd /build/src/DSperate; \
 	  for c in miniz miniz_tdef miniz_tinfl; do $$CC -O2 -w -Isrc -c src/core/cart/miniz/$$c.c -o $$O/$$c.o; done; \
+	  $$CC -O2 -Isrc -c src/core/gpu/pow_compat.c -o $$O/pow_compat.o; \
 	  $$CXX -std=c++17 -O2 -w -Isrc -c src/frontend/sdl/minui_stb.cpp -o $$O/minui_stb.o; \
 	  $$CXX -std=c++17 -O2 -Isrc -static-libstdc++ -static-libgcc /build/scripts/render-menu.cpp \
 	    src/frontend/sdl/minui_menu.cpp src/frontend/sdl/minui_gfx.cpp src/frontend/sdl/menu.cpp \
-	    src/frontend/sdl/settings.cpp $$O/minui_stb.o $$O/miniz.o $$O/miniz_tdef.o $$O/miniz_tinfl.o \
-	    -lm -o $$O/render-menu; \
+	    src/frontend/sdl/settings.cpp src/frontend/sdl/minui_shader.cpp src/frontend/video/layout.cpp $$O/pow_compat.o \
+	    $$O/minui_stb.o $$O/miniz.o $$O/miniz_tdef.o $$O/miniz_tinfl.o \
+	    -lm -pthread -o $$O/render-menu; \
 	  $$O/render-menu /build/build/screenshots $$F/BPreplayBold-unhinted.otf $$F/font1.ttf'
 
 # ── Dist ──────────────────────────────────────────────────────────────────────
@@ -305,6 +308,8 @@ dist-common: clone
 	@# GPLv3: ship the licence with the binaries and record exactly what they
 	@# were built from, so the corresponding-source obligation is answerable.
 	cp $(SRC)/DSperate/LICENSE $(DIST)/LICENSE.DSperate
+	@# Who wrote the shaders COLOUR and PATTERN port, and under what licence.
+	cp THIRD_PARTY.md $(DIST)/THIRD_PARTY.md
 	@# The oldest save state format this build can read. launch.sh compares it
 	@# with a state's header before asking for --load-state, since a refused
 	@# state fails the run. Read from the source so a format bump needs no

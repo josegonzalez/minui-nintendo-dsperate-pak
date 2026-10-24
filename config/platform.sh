@@ -73,6 +73,11 @@ DSP_H700_FIXED_GUID='19000000010000000100000000016e01'
 #   PROFILE_LD_DIRS    extra LD_LIBRARY_PATH entries, space separated
 #   PROFILE_LABELS     the pause menu's names for buttons not labelled the
 #                      way SDL names them, as name=LABEL pairs, space separated
+#   PROFILE_SLOW_SHADERS
+#                      the Visual FX COLOUR and PATTERN values measured too slow
+#                      here, as colour:<name> and pattern:<name>, space
+#                      separated. The pause menu says so beside them. Filled
+#                      from the "shader timing:" log lines (TECHNICAL.md)
 dsp_platform_profile() {
     _platform="$1"
     _device="$2"
@@ -81,6 +86,8 @@ dsp_platform_profile() {
     PROFILE_LABELS=""
     PROFILE_ROTATE=""
     PROFILE_LD_DIRS=""
+    # Nothing measured too slow yet, on any platform.
+    PROFILE_SLOW_SHADERS=""
 
     case "$_platform" in
     tg5040)

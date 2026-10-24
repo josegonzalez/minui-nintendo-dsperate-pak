@@ -9,8 +9,14 @@
 // Everything behind the menu is a stand-in: a generated picture for the
 // game, fake settings, bindings, cheats and achievements, and a battery at
 // three quarters. The menu itself is the code that ships.
+//
+// It also draws one stand-in DS screen through every COLOUR and PATTERN
+// preset (minui_shader.h), with the tables that ship, the way the scanline
+// scaler applies them, as shader-<preset>-<size>.png.
 #include "frontend/sdl/minui_menu.h"
 #include "frontend/sdl/minui_gfx.h"
+#include "frontend/sdl/minui_shader.h"
+#include "frontend/video/layout.h"
 #include "core/cart/miniz/miniz_tdef.h"
 #include "core/cheat/database.h"
 #include "core/io/io.h"
@@ -167,6 +173,75 @@ void write_text(const std::string& path, const char* s) {
 
 u32 press(B b) { return 1u << b; }
 
+// A DS screen with what the presets change most: smooth gradients, the
+// darkest shades, saturated colours and single-pixel detail.
+std::vector<u32> ds_frame() {
+  std::vector<u32> px(ds::SCREEN_W * ds::SCREEN_H);
+  const u32 bars[] = {0xF80000, 0xF8F800, 0x00F800, 0x00F8F8, 0x0000F8, 0xF800F8, 0xF8F8F8, 0x000000};
+  for (u32 y = 0; y < ds::SCREEN_H; ++y)
+    for (u32 x = 0; x < ds::SCREEN_W; ++x) {
+      u32 c;
+      if (y < 64) c = (std::min<u32>(252, 40 + y * 3) << 16) | (std::min<u32>(252, 120 + x / 2) << 8) | 252;   // sky
+      else if (y < 96) c = bars[x / 32];
+      else if (y < 128) { const u32 v = (x / 4) & 0xFC; c = (v << 16) | (v << 8) | v; }   // the 64 greys
+      else if (y < 160) c = ((x / 8 + y / 8) & 1) ? 0x38A048 : 0x206830;                  // grass, checkered
+      else c = (x % 4 == 0 || y % 4 == 0) ? 0x101010 : (((x * 3) & 0xFC) << 16) | (0x40 << 8) | ((255 - x) & 0xFC);
+      px[y * ds::SCREEN_W + x] = 0xFF000000u | c;
+    }
+  return px;
+}
+
+// The screen alone on a w x h panel through a preset, as the scaler does it:
+// nearest runs, the colour table before them, then the pattern's class rows,
+// or sharp bilinear's sample points.
+std::vector<u32> shade_frame(const std::vector<u32>& ds_px, int w, int h, ds::sdl::shader::Colour colour, ds::sdl::shader::Pattern pattern) {
+  namespace sh = ds::sdl::shader;
+  ds::frontend::Layout l;
+  l.mode = ds::frontend::Mode::Single;
+  ds::frontend::View v[2];
+  ds::frontend::place(l, w, h, v);
+  const ds::frontend::Rect r = v[0].rect;
+  std::vector<u32> out(static_cast<size_t>(w) * h, 0xFF000000u);
+  sh::ColourTable table;
+  table.stage(colour, pattern == sh::Pattern::ZfastLcd);
+  table.finish();
+  std::vector<u32> src(ds_px.size());
+  table.apply(ds_px.data(), src.data(), src.size());
+  const u32 rw = static_cast<u32>(r.w), rh = static_cast<u32>(r.h);
+  auto at = [&](u32 x, u32 y) { return src[std::min<u32>(y, ds::SCREEN_H - 1) * ds::SCREEN_W + std::min<u32>(x, ds::SCREEN_W - 1)]; };
+  auto lerp = [](u32 a, u32 b, u32 f) {
+    u32 o = 0;
+    for (u32 sh = 0; sh < 32; sh += 8) o |= ((((a >> sh) & 255) * (256 - f) + ((b >> sh) & 255) * f + 128) >> 8) << sh;
+    return o;
+  };
+  sh::PatternStore st;
+  sh::build_pattern(pattern, rw, rh, 0, rw, st);
+  std::vector<ds::u16> sx, ystart;
+  std::vector<u8> wx, wy;
+  if (pattern == sh::Pattern::SharpBilinear) sh::build_sharp(rw, rh, 0, rw, sx, wx, ystart, wy);
+  std::vector<u32> row(rw);
+  for (u32 y = 0; y < rh; ++y) {
+    if (!sx.empty()) {
+      // The line owning this row, and the one before it.
+      u32 line = 0;
+      while (line < ds::SCREEN_H && ystart[line + 1] <= y) ++line;
+      const u32 l1 = std::min<u32>(line, ds::SCREEN_H - 1), l0 = line == 0 || line >= ds::SCREEN_H ? l1 : line - 1;
+      for (u32 x = 0; x < rw; ++x) {
+        const u32 a = lerp(at(sx[x], l0), at(sx[x] + 1u, l0), wx[x]), b = lerp(at(sx[x], l1), at(sx[x] + 1u, l1), wx[x]);
+        row[x] = l0 == l1 ? a : lerp(a, b, wy[y]);
+      }
+    } else {
+      for (u32 x = 0; x < rw; ++x) row[x] = at(x * ds::SCREEN_W / rw, y * ds::SCREEN_H / rh);
+      if (st.get() && !st.plain[st.row_class[y]]) {
+        const size_t c = static_cast<size_t>(st.row_class[y]) * rw * 4;
+        sh::modulate_row(row.data(), &st.mul[c], &st.add[c], rw, row.data());
+      }
+    }
+    std::copy(row.begin(), row.end(), out.begin() + static_cast<long>((static_cast<u32>(r.y) + y) * static_cast<u32>(w) + static_cast<u32>(r.x)));
+  }
+  return out;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -278,6 +353,35 @@ int main(int argc, char** argv) {
         ++written;
       }
     }
+  }
+  // Every preset rgds-core and libretro name, as the two rows draw it.
+  {
+    namespace sh = ds::sdl::shader;
+    using C = sh::Colour;
+    using P = sh::Pattern;
+    const struct { const char* name; C c; P p; } presets[] = {
+      {"off", C::Off, P::Off},
+      {"sharp_bilinear", C::Off, P::SharpBilinear}, {"lcd1x", C::Off, P::Lcd}, {"zfast_lcd", C::Off, P::ZfastLcd},
+      {"nds_color", C::Nds, P::Off}, {"natural_vision", C::NaturalVision, P::Off},
+      {"lcd1x+nds_color", C::Nds, P::Lcd}, {"lcd1x+natural_vision", C::NaturalVision, P::Lcd},
+      {"lcd1x+nds_color+natural_vision", C::NdsNaturalVision, P::Lcd},
+      {"zfast_lcd+nds_color", C::Nds, P::ZfastLcd}, {"sharp_bilinear+nds_color", C::Nds, P::SharpBilinear},
+      {"soft_scanlines", C::Off, P::Scanlines}, {"warm_paper", C::WarmPaper, P::Off}, {"cool_crisp", C::CoolCrisp, P::Off},
+      {"pocket_green", C::PocketGreen, P::Off}, {"amber", C::Amber, P::Off}, {"soft_lcd_grid", C::Off, P::SoftGrid},
+      {"ds_classic", C::DsClassic, P::DsClassic}, {"ds_lite", C::DsLite, P::DsLite},
+      {"natural_glow", C::Natural, P::Off}, {"vivid_lcd", C::Vivid, P::RgbStripes},
+      {"natural_smooth", C::Natural, P::Off}, {"vivid_smooth", C::Vivid, P::Off},
+      {"pixel_beads", C::Bold, P::Beads}, {"glossy_tiles", C::Bold, P::Tiles},
+      {"gba_color", C::Gba, P::Off}, {"gba_screen", C::Gba, P::Gba},
+    };
+    const std::vector<u32> ds_px = ds_frame();
+    for (const auto& size : {std::make_pair(640, 480), std::make_pair(1024, 768)})
+      for (const auto& pr : presets) {
+        const std::vector<u32> px = shade_frame(ds_px, size.first, size.second, pr.c, pr.p);
+        const std::string path = out + "/shader-" + pr.name + "-" + std::to_string(size.first) + "x" + std::to_string(size.second) + ".png";
+        if (!save_png(px, size.first, size.second, path)) { std::fprintf(stderr, "cannot write %s\n", path.c_str()); std::exit(1); }
+        ++written;
+      }
   }
   std::printf("render-menu: %d screenshots in %s\n", written, out.c_str());
   return 0;
