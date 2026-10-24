@@ -40,6 +40,12 @@ inline constexpr Shortcut kShortcuts[] = {
   {"load_state", "Load state", "mod+leftshoulder", "mod+leftshoulder"},
   {"slot_next", "Next state slot", "mod+dpright", "mod+dpright"},
   {"slot_prev", "Previous state slot", "mod+dpleft", "mod+dpleft"},
+  {"colour_next", "Next colour", "none", "none"},
+  {"colour_prev", "Previous colour", "none", "none"},
+  {"pattern_next", "Next pattern", "none", "none"},
+  {"pattern_prev", "Previous pattern", "none", "none"},
+  {"preset_next", "Next shader preset", "none", "none"},
+  {"preset_prev", "Previous shader preset", "none", "none"},
 };
 inline constexpr int kShortcutCount = static_cast<int>(sizeof kShortcuts / sizeof kShortcuts[0]);
 

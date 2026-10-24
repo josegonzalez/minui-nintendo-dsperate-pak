@@ -137,6 +137,17 @@ profile_for() {
     done
 }
 
+@test "no platform marks a shader slow until it has been measured" {
+    for p in tg5040:brick tg5040:smartpro tg5050: h700:rg35xxplus h700:rg40xxh h700:rg28xx; do
+        PROFILE_SLOW_SHADERS="stale"
+        profile_for "${p%%:*}" "${p##*:}"
+        [ -z "$PROFILE_SLOW_SHADERS" ] || {
+            echo "$p marks $PROFILE_SLOW_SHADERS"
+            return 1
+        }
+    done
+}
+
 @test "only TrimUI adds the system library directory" {
     profile_for tg5040 brick
     [ "$PROFILE_LD_DIRS" = "/usr/trimui/lib" ]

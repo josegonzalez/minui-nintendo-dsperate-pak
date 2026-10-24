@@ -232,7 +232,8 @@ load test_helper
     [ -n "$output" ]
     mk MINUI_OVERLAY
     overlay="$output"
-    for f in minui.h minui.cpp minui_gfx.h minui_gfx.cpp minui_menu.h minui_menu.cpp minui_pad.h minui_shortcuts.h minui_stb.cpp stb_image.h stb_truetype.h; do
+    for f in minui.h minui.cpp minui_gfx.h minui_gfx.cpp minui_menu.h minui_menu.cpp minui_pad.h minui_shader.h minui_shader.cpp \
+        minui_resample.h minui_resample.cpp minui_shader_presets.h minui_shortcuts.h minui_stb.cpp stb_image.h stb_truetype.h; do
         [[ " $overlay " == *" $f "* ]] || return 1
     done
     for f in $overlay; do
@@ -250,8 +251,9 @@ load test_helper
 
 @test "the pause menu's ctest suite is copied in and registered" {
     mk MINUI_OVERLAY_TESTS
-    [ "$output" = "minui_menu_test.cpp" ]
+    [ "$output" = "minui_menu_test.cpp minui_shader_test.cpp" ]
     [ -f "$REPO_ROOT/overlay/tests/minui_menu_test.cpp" ]
+    [ -f "$REPO_ROOT/overlay/tests/minui_shader_test.cpp" ]
     copy_line="$(grep -n 'cp $(addprefix $(OVERLAY)/tests/,$(MINUI_OVERLAY_TESTS)) $@/tests/' "$REPO_ROOT/Makefile" | head -1 | cut -d: -f1)"
     patch_line="$(grep -n 'for p in $(PATCHES)/\*.patch' "$REPO_ROOT/Makefile" | head -1 | cut -d: -f1)"
     [ -n "$copy_line" ] && [ "$copy_line" -lt "$patch_line" ]
@@ -316,7 +318,7 @@ shortcut_table() {
 }
 
 @test "the shortcut table reads as one entry per line" {
-    [ "$(shortcut_table | wc -l)" -eq 18 ]
+    [ "$(shortcut_table | wc -l)" -eq 24 ]
     shortcut_table | grep -q '^pause.alt mod$'
     shortcut_table | grep -q '^pip_corner_next mod+start$'
 }
@@ -349,7 +351,61 @@ shortcut_table() {
 }
 
 @test "no two shortcuts share a chord" {
-    [ -z "$(shortcut_table | awk '{ print $2 }' | sort | uniq -d)" ]
+    [ -z "$(shortcut_table | awk '$2 != "none" { print $2 }' | sort | uniq -d)" ]
+}
+
+@test "the shader shortcuts ship unbound and come after the game switcher" {
+    for key in colour_next colour_prev pattern_next pattern_prev preset_next preset_prev; do
+        shortcut_table | grep -q "^$key none$" || return 1
+    done
+    # 0006 adds the actions to upstream's list after the one 0003 adds.
+    p="$REPO_ROOT/patches/0006-shaders.patch"
+    grep -q '^+  GameSwitcher, ColourNext, ColourPrev, PatternNext, PatternPrev, PresetNext, PresetPrev, Count$' "$p"
+    grep -q '"game_switcher", "colour_next", "colour_prev", "pattern_next", "pattern_prev", "preset_next", "preset_prev"};$' "$p"
+}
+
+@test "the shader patch is present, adds no files and leaves upstream's menu alone" {
+    p="$REPO_ROOT/patches/0006-shaders.patch"
+    [ -f "$p" ]
+    ! grep -q "new file mode" "$p"
+    ! grep -q '^diff --git a/src/frontend/sdl/menu\.' "$p"
+    # The module and its suite are built where 0003's are.
+    grep -q '^+target_sources(dsperate PRIVATE minui_shader.cpp minui_resample.cpp)$' "$p"
+    grep -q '^+add_executable(test_minui_shader minui_shader_test.cpp ../src/frontend/sdl/minui_shader.cpp ../src/frontend/sdl/minui_resample.cpp$' "$p"
+    grep -q '^+add_test(NAME minui_shader COMMAND test_minui_shader)$' "$p"
+    mk CTEST_EXCLUDE
+    [[ "$output" != *shader* ]]
+    # Every key documented in the reference config the pak ships.
+    for key in "preset = off" "colour = off" "scaling = off" "filter = off" "pattern = off" "glow = auto" "curve = off"; do
+        grep -q "^+# $key" "$p" || return 1
+    done
+    # GLOW holds lines back through a filter in front of the rest of the scaler.
+    grep -q '^+void Gpu::emit_line(int screen, u32 line, const u32\* src) {$' "$p"
+}
+
+@test "the shaders keep the pow the ABI gate allows" {
+    # std::pow would bind pow@GLIBC_2.29 on the newer toolchain; the core's
+    # pow_compat.c pins the old symbol.
+    ! grep -q 'std::pow\|[^_]pow(' "$REPO_ROOT/overlay/minui_shader.cpp" "$REPO_ROOT/overlay/minui_resample.cpp"
+    grep -q 'ds_pow_compat' "$REPO_ROOT/overlay/minui_shader.cpp"
+}
+
+@test "the shaders' authors and licences ship with the pak" {
+    [ -f "$REPO_ROOT/THIRD_PARTY.md" ]
+    for who in kleinrein/rgds-core jdgleaver Gigaherz "Greg Hogan" hunterk Pokefan531 Themaister ShadX Hyllian Sp00kyFox; do
+        grep -q "$who" "$REPO_ROOT/THIRD_PARTY.md" || return 1
+        grep -q "$who" "$REPO_ROOT/overlay/minui_shader.h" || return 1
+    done
+    # NextUI's shaders, credited in the resampler's header as well.
+    for who in Fes zadpos decavoid "Team XBMC" "Stefanos A." "guest(r)" "Andrea Mazzoleni" DariusG RiskyJumps davej; do
+        grep -qF "$who" "$REPO_ROOT/THIRD_PARTY.md" || return 1
+    done
+    for who in Fes zadpos decavoid "Team XBMC" "guest(r)" "Andrea Mazzoleni" davej; do
+        grep -qF "$who" "$REPO_ROOT/overlay/minui_resample.h" || return 1
+    done
+    grep -q 'GPL-2.0-or-later' "$REPO_ROOT/THIRD_PARTY.md"
+    grep -q 'PolyForm Noncommercial' "$REPO_ROOT/THIRD_PARTY.md"
+    grep -q 'cp THIRD_PARTY.md $(DIST)/THIRD_PARTY.md' "$REPO_ROOT/Makefile"
 }
 
 @test "the GCC 8 workarounds are still present" {
@@ -410,6 +466,10 @@ shortcut_table() {
     [ -f "$REPO_ROOT/scripts/render-menu.cpp" ]
     # The real menu is linked, not a copy of it.
     grep -q 'src/frontend/sdl/minui_menu.cpp' "$REPO_ROOT/Makefile"
+    # And the shaders, through the core's pow.
+    grep -q 'src/frontend/sdl/minui_shader.cpp' "$REPO_ROOT/Makefile"
+    grep -q 'src/frontend/sdl/minui_resample.cpp' "$REPO_ROOT/Makefile"
+    grep -q 'src/core/gpu/pow_compat.c' "$REPO_ROOT/Makefile"
     grep -q '#include "frontend/sdl/minui_menu.h"' "$REPO_ROOT/scripts/render-menu.cpp"
     # The fonts are fetched at an exact commit and never vendored.
     for v in MINUI_FONT_URL NEXTUI_FONT_URL; do

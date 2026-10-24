@@ -119,6 +119,18 @@ dsp_probe_buttons() {
     "$BIN_DIR/dsp-pad-guid" --probe 15 || echo "dsp-pad-guid could not probe the controls"
 }
 
+# The Visual FX values the pause menu marks as slow on this platform, and,
+# with shader-timing.txt beside device.txt, DSperate logging what COLOUR and
+# PATTERN cost a frame. The trigger stays, so it can be timed over several games.
+dsp_export_shaders() {
+    MINUI_SLOW_SHADERS="${PROFILE_SLOW_SHADERS:-}"
+    export MINUI_SLOW_SHADERS
+    if [ -f "$DSP_USERDATA_DIR/shader-timing.txt" ]; then
+        MINUI_SHADER_TIMING=1
+        export MINUI_SHADER_TIMING
+    fi
+}
+
 # Seed once per profile so remapping done in DSperate's pause menu survives later
 # launches. The runtime paths cannot live in the shipped template because
 # SDCARD_PATH and friends are only known here.
@@ -440,6 +452,7 @@ main() {
     dsp_export_pad_mapping
     dsp_mark "pad mapped"
     dsp_probe_buttons
+    dsp_export_shaders
 
     # Only on a panel whose rotation SDL cannot tell DSperate about; the fbdev
     # tier writes /dev/fb0 directly. Empty everywhere else.

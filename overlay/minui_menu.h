@@ -124,6 +124,10 @@ public:
   // "LAYOUT: DOMINANT V": the row's label and the value's own label, from
   // the settings tables the Layout page shows, or the raw value.
   static std::string setting_notice(const char* key, const std::string& value);
+  // A COLOUR or PATTERN value measured too slow on this platform: launch.sh
+  // exports config/platform.sh's list as MINUI_SLOW_SHADERS, "colour:<name>"
+  // and "pattern:<name>" separated by spaces. Still offered; the page says so.
+  static bool slow_on_device(const char* key, const std::string& value);
   // Whether a screenshot should say so: NextUI's notifyScreenshot, passed on
   // by launch.sh as MINUI_NOTIFY_SCREENSHOT. On unless it is "0".
   bool notify_screenshots() const { return active_ && notify_screenshot_; }
@@ -234,8 +238,15 @@ private:
 
   int  opt_row_ = 0;
   int  set_table_ = 0;           // which Setting table the settings page shows
-  int  set_row_[4] = {};
-  mutable int set_top_[4] = {};
+  int  set_row_[5] = {};
+  mutable int set_top_[5] = {};
+  // Table 4 is the pak's Shaders (Advanced) page, opened from a row Visual FX
+  // carries after SHADER PRESET. The rows of the page shown, that link
+  // included: null for the link.
+  static constexpr int kShaderTable = 4;
+  int  settings_rows() const;
+  const Setting* setting_row(int i) const;
+  int  link_row() const;          // the link's row on this page, or -1
   mutable int opt_top_ = 0;
 
   SettingsHost* host_ = nullptr;

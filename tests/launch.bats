@@ -523,6 +523,25 @@ fake_nextui() {
     [ -z "$MINUI_BUTTON_LABELS" ]
 }
 
+@test "the pause menu is told which shaders are slow on the platform" {
+    PROFILE_SLOW_SHADERS="colour:natural_vision pattern:beads"
+    dsp_export_shaders
+    [ "$MINUI_SLOW_SHADERS" = "colour:natural_vision pattern:beads" ]
+    PROFILE_SLOW_SHADERS=""
+    dsp_export_shaders
+    [ -z "$MINUI_SLOW_SHADERS" ]
+}
+
+@test "shader-timing.txt turns the shader timing on, and stays" {
+    unset MINUI_SHADER_TIMING
+    dsp_export_shaders
+    [ -z "${MINUI_SHADER_TIMING:-}" ]
+    touch "$DSP_USERDATA_DIR/shader-timing.txt"
+    dsp_export_shaders
+    [ "$MINUI_SHADER_TIMING" = "1" ]
+    [ -f "$DSP_USERDATA_DIR/shader-timing.txt" ]
+}
+
 @test "probe.txt runs the probe once, and nothing runs without it" {
     printf '#!/bin/sh\necho "$@" >>"%s"\n' "$BATS_TEST_TMPDIR/probe.log" >"$PAK_DIR/$PLATFORM/dsp-pad-guid"
     chmod +x "$PAK_DIR/$PLATFORM/dsp-pad-guid"
