@@ -19,7 +19,7 @@ enum class Colour : u8 {
 };
 enum class Pattern : u8 {
   Off, SharpBilinear, Lcd, ZfastLcd, Scanlines, SoftGrid, DsClassic, DsLite, Gba, RgbStripes,
-  Beads, Tiles, Count
+  Beads, Tiles, Crt, Count
 };
 
 inline constexpr Choice kColours[] = {
@@ -51,6 +51,7 @@ inline constexpr Choice kPatterns[] = {
   {"rgb_stripes", "RGB STRIPES"},
   {"beads", "BEADS"},
   {"tiles", "TILES"},
+  {"crt", "CRT"},
 };
 inline constexpr u8 kColourCount = static_cast<u8>(sizeof kColours / sizeof kColours[0]);
 inline constexpr u8 kPatternCount = static_cast<u8>(sizeof kPatterns / sizeof kPatterns[0]);

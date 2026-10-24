@@ -373,6 +373,7 @@ int main(int argc, char** argv) {
       {"natural_smooth", C::Natural, P::Off}, {"vivid_smooth", C::Vivid, P::Off},
       {"pixel_beads", C::Bold, P::Beads}, {"glossy_tiles", C::Bold, P::Tiles},
       {"gba_color", C::Gba, P::Off}, {"gba_screen", C::Gba, P::Gba},
+      {"crt", C::Off, P::Crt},   // the pak's own
     };
     const std::vector<u32> ds_px = ds_frame();
     for (const auto& size : {std::make_pair(640, 480), std::make_pair(1024, 768)})

@@ -111,7 +111,7 @@ The MENU tap is `pause.alt = mod` in the `[padhotkeys]` section of the config. C
 Options > Visual FX has two rows for the screen shaders of [rgds-core](https://github.com/kleinrein/rgds-core), and the libretro ones it ships:
 
 - COLOUR: another screen's colours, or a mood. `nds`, `natural_vision`, `nds_natural_vision`, `ds_classic`, `ds_lite`, `natural`, `vivid`, `bold`, `gba`, `warm_paper`, `cool_crisp`, `pocket_green` and `amber`. It works on every device.
-- PATTERN: what each DS pixel looks like on the panel. `sharp_bilinear`, `lcd`, `zfast_lcd`, `scanlines`, `soft_grid`, `ds_classic`, `ds_lite`, `gba`, `rgb_stripes`, `beads` and `tiles`. It needs a screen shown larger than the DS's own, and fades in between one and two times the size, as rgds-core's do.
+- PATTERN: what each DS pixel looks like on the panel. `sharp_bilinear`, `lcd`, `zfast_lcd`, `scanlines`, `soft_grid`, `ds_classic`, `ds_lite`, `gba`, `rgb_stripes`, `beads`, `tiles` and `crt`. It needs a screen shown larger than the DS's own, and fades in between one and two times the size, as rgds-core's do.
 
 Where a device's display engine scales the picture in hardware, PATTERN offers only `lcd`, `zfast_lcd`, `scanlines` and `soft_grid`, the ones that only darken, drawn over the picture by the display engine. BILINEAR and CHUNKY take precedence over PATTERN, and a PATTERN takes the place of LCD GRID and SEAM. The page says why when a row is off.
 
@@ -147,6 +147,8 @@ Four of them are not exactly rgds-core's:
 - Natural glow, Natural smooth and Vivid smooth keep their colours only. The glow and the smoothed diagonals read the neighbouring pixels, which these rows do not.
 - Vivid LCD keeps its stripes on the brightest colours, where rgds-core fades them out.
 - zFast LCD's gamma darkens a pixel before its border does rather than after, which only changes the border.
+
+`crt` is this pak's own rather than rgds-core's: scanlines with a dark gap between DS rows, under a red, green and blue stripe for each DS pixel, brightened to make up for the light they take away. It has no screen curvature, bloom or glow.
 
 ## Saves & States
 

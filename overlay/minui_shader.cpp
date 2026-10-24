@@ -340,6 +340,18 @@ void pattern_at(Pattern p, double fx, double fy, double ax, double ay, double mu
     for (int i = 0; i < 3; ++i) { mul[i] = m; add[i] = a; }
     return;
   }
+  case Pattern::Crt: {
+    // The pak's own, not rgds-core's: a beam brightest across the middle of
+    // each DS row with a dark gap between rows, under an aperture grille of
+    // one red, green and blue stripe per DS pixel, lifted to make up for
+    // the light both take away. Fades in over 1x..2x like the RG DS ones.
+    const double beam = mix(0.45, 1.0, std::exp(-8.0 * (fy - 0.5) * (fy - 0.5)));
+    for (int i = 0; i < 3; ++i) {
+      const double grille = 1.0 + 0.25 * (3.0 * stripe_cover(i, fx, ax) - 1.0);
+      mul[i] = mix(1.0, beam * grille * 1.2, s);
+    }
+    return;
+  }
   case Pattern::Tiles: {
     const double qx = fx - 0.5, qy = fy - 0.5;
     const double inside = 0.16 - std::hypot(std::max(std::fabs(qx) - 0.28, 0.0), std::max(std::fabs(qy) - 0.28, 0.0));

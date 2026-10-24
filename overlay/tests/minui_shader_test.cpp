@@ -88,7 +88,7 @@ void test_presets() {
   sh::Colour c = sh::Colour::Gba;
   CHECK(!sh::parse_colour("sepia", c) && c == sh::Colour::Off);
   sh::Pattern p = sh::Pattern::Lcd;
-  CHECK(!sh::parse_pattern("crt", p) && p == sh::Pattern::Off);
+  CHECK(!sh::parse_pattern("hq4x", p) && p == sh::Pattern::Off);
   // After BILINEAR, COLOUR then PATTERN, over the lists above, off by default.
   const ds::sdl::Setting* t = ds::sdl::kVideoSettings;
   int lin = -1;
@@ -325,6 +325,25 @@ void test_mask_patterns() {
   std::fill(stage.begin(), stage.end(), 0u);
   sh::draw_mask(sh::Pattern::Beads, stage.data(), pw, 0, pw, 0, ph, 256, 192, 0);
   for (u32 px : stage) CHECK(px == 0);
+}
+
+// CRT is the pak's own: scanlines and a grille that tint each channel, so not
+// a mask, and lifted so a pixel's light over its cell stays near the original.
+void test_crt() {
+  CHECK(!sh::pattern_is_mask(sh::Pattern::Crt) && sh::pattern_is_table(sh::Pattern::Crt));
+  double sum[3] = {0, 0, 0};
+  const int n = 64;
+  for (int j = 0; j < n; ++j)
+    for (int i = 0; i < n; ++i) {
+      double m[3], a[3];
+      sh::pattern_at(sh::Pattern::Crt, (i + 0.5) / n, (j + 0.5) / n, 0.25, 0.25, m, a);
+      for (int k = 0; k < 3; ++k) { sum[k] += m[k]; CHECK(a[k] == 0 && m[k] > 0 && m[k] < 255.0 / 128); }
+    }
+  for (double v : sum) CHECK(std::fabs(v / (n * n) - 1.0) < 0.1);
+  // At 1x it is gone, as the RG DS patterns are.
+  double m[3], a[3];
+  sh::pattern_at(sh::Pattern::Crt, 0.0, 0.0, 1.0, 1.0, m, a);
+  for (double v : m) CHECK(v == 1.0);
 }
 
 // sharp-bilinear: nearest at whole scales, the shader's sample points between.
@@ -564,6 +583,7 @@ int main() {
   test_modulate_neon();
   test_pattern_tables();
   test_mask_patterns();
+  test_crt();
   test_sharp();
   test_scaler();
   test_colour_comes_first();
