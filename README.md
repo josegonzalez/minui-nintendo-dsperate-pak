@@ -146,7 +146,7 @@ These lines in that log are worth knowing:
 - `resume state <path> not found, falling back to autoload` means RESUME in the game switcher asked for a save state slot that no longer exists, so the game started from its last autosave instead.
 - `resume state <path> predates this DSperate (format N, needs M), falling back to autoload` means the slot RESUME asked for was saved by an older DSperate that wrote a format this one cannot read, so the game started from its last autosave instead.
 - `state: no state in slot` or `state: cannot load ...` means DSperate refused the state RESUME asked for. The pak exits back to the launcher rather than starting the game from a state it cannot read.
-- `timing: <seconds> <step>` lines mark the launch, the pad mapping, the emulator starting, the game running, quitting, the state being saved, the emulator exiting and the card being synced. The seconds count from when the device booted, so the gap between two lines is how long that step took.
+- `timing: <seconds> <step>` lines mark the launch, the config being ready, the launcher's look being read, the pad mapping, the emulator starting, the game running, quitting, the state being saved, the emulator exiting and the card being synced. The seconds count from when the device booted, so the gap between two lines is how long that step took.
 
 To find the numbers of buttons the pak does not use yet, create an empty `probe.txt` in `/.userdata/$PLATFORM/DSP-dsperate/` and launch a game. For the first 15 seconds, before the game appears, press each button once. Every press is written to the log as a `probe:` line, and `probe.txt` is removed so the next launch is a normal one.
 

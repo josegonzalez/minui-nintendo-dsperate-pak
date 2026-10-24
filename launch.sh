@@ -443,7 +443,9 @@ main() {
 
     dsp_seed_config
     dsp_migrate_config
+    dsp_mark "config ready"
     dsp_detect_style
+    dsp_mark "style read"
     dsp_export_pad_mapping
     dsp_mark "pad mapped"
     dsp_probe_buttons
