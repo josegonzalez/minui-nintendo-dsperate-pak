@@ -10,11 +10,13 @@
 // game, fake settings, bindings, cheats and achievements, and a battery at
 // three quarters. The menu itself is the code that ships.
 //
-// It also draws one stand-in DS screen through every COLOUR, PATTERN and
-// GLOW preset (minui_shader.h), with the tables that ship, the way the
-// scanline scaler applies them, as shader-<preset>-<size>.png.
+// It also draws one stand-in DS screen through every SHADER PRESET and each
+// SCALING, FILTER, GLOW and CURVE (minui_shader.h, minui_resample.h), with the
+// tables that ship, the way the scanline tiers apply them, as
+// shader-<preset>-<size>.png.
 #include "frontend/sdl/minui_menu.h"
 #include "frontend/sdl/minui_gfx.h"
+#include "frontend/sdl/minui_resample.h"
 #include "frontend/sdl/minui_shader.h"
 #include "frontend/video/layout.h"
 #include "core/cart/miniz/miniz_tdef.h"
@@ -24,6 +26,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <map>
 #include <string>
 #include <sys/stat.h>
@@ -191,11 +194,10 @@ std::vector<u32> ds_frame() {
   return px;
 }
 
-// The screen alone on a w x h panel through a preset, as the scaler does it:
-// nearest runs, the colour table before them, then the pattern's class rows,
-// or sharp bilinear's sample points.
-std::vector<u32> shade_frame(const std::vector<u32>& ds_px, int w, int h, ds::sdl::shader::Colour colour, ds::sdl::shader::Pattern pattern,
-                             ds::sdl::shader::Glow glow) {
+// The screen alone on a w x h panel through a preset, as the frontend does
+// it: COLOUR (in the pattern's tone), FILTER, GLOW, then SCALING or the
+// nearest runs, the PATTERN's class rows, and the CURVE over the result.
+std::vector<u32> shade_frame(const std::vector<u32>& ds_px, int w, int h, const ds::sdl::shader::Preset& pr) {
   namespace sh = ds::sdl::shader;
   ds::frontend::Layout l;
   l.mode = ds::frontend::Mode::Single;
@@ -204,44 +206,50 @@ std::vector<u32> shade_frame(const std::vector<u32>& ds_px, int w, int h, ds::sd
   const ds::frontend::Rect r = v[0].rect;
   std::vector<u32> out(static_cast<size_t>(w) * h, 0xFF000000u);
   sh::ColourTable table;
-  table.stage(colour, pattern == sh::Pattern::ZfastLcd);
+  table.stage(pr.colour, sh::pattern_tone(pr.pattern));
   table.finish();
-  std::vector<u32> coloured(ds_px.size()), src(ds_px.size());
+  std::vector<u32> coloured(ds_px.size()), filtered(ds_px.size()), src(ds_px.size());
   table.apply(ds_px.data(), coloured.data(), coloured.size());
-  // GLOW after the colour, auto being crt's own halation.
+  sh::NeighbourFilter filter;
+  filter.configure(pr.filter);
+  if (filter.on()) filter.frame(coloured.data(), filtered.data());
+  else filtered = coloured;
+  // GLOW after them, auto being crt's own halation.
   sh::GlowFilter glowing;
-  glowing.configure(sh::glow_spec(glow, "auto", "auto", "auto", pattern == sh::Pattern::Crt));
-  glowing.frame(coloured.data(), src.data());
+  glowing.configure(sh::glow_spec(pr.glow, "auto", "auto", "auto", pr.pattern == sh::Pattern::Crt));
+  glowing.frame(filtered.data(), src.data());
   const u32 rw = static_cast<u32>(r.w), rh = static_cast<u32>(r.h);
-  auto at = [&](u32 x, u32 y) { return src[std::min<u32>(y, ds::SCREEN_H - 1) * ds::SCREEN_W + std::min<u32>(x, ds::SCREEN_W - 1)]; };
-  auto lerp = [](u32 a, u32 b, u32 f) {
-    u32 o = 0;
-    for (u32 sh = 0; sh < 32; sh += 8) o |= ((((a >> sh) & 255) * (256 - f) + ((b >> sh) & 255) * f + 128) >> 8) << sh;
-    return o;
-  };
+  // The pattern, or with none sharp-shimmerless-grid's own grid (Display::build_scale).
   sh::PatternStore st;
-  sh::build_pattern(pattern, rw, rh, 0, rw, st);
-  std::vector<ds::u16> sx, ystart;
-  std::vector<u8> wx, wy;
-  if (pattern == sh::Pattern::SharpBilinear) sh::build_sharp(rw, rh, 0, rw, sx, wx, ystart, wy);
-  std::vector<u32> row(rw);
-  for (u32 y = 0; y < rh; ++y) {
-    if (!sx.empty()) {
-      // The line owning this row, and the one before it.
-      u32 line = 0;
-      while (line < ds::SCREEN_H && ystart[line + 1] <= y) ++line;
-      const u32 l1 = std::min<u32>(line, ds::SCREEN_H - 1), l0 = line == 0 || line >= ds::SCREEN_H ? l1 : line - 1;
-      for (u32 x = 0; x < rw; ++x) {
-        const u32 a = lerp(at(sx[x], l0), at(sx[x] + 1u, l0), wx[x]), b = lerp(at(sx[x], l1), at(sx[x] + 1u, l1), wx[x]);
-        row[x] = l0 == l1 ? a : lerp(a, b, wy[y]);
-      }
-    } else {
-      for (u32 x = 0; x < rw; ++x) row[x] = at(x * ds::SCREEN_W / rw, y * ds::SCREEN_H / rh);
-      if (st.get() && !st.plain[st.row_class[y]]) {
-        sh::modulate_class(st.rows, st.row_class[y], row.data(), row.data());
-      }
+  if (sh::pattern_is_table(pr.pattern)) sh::build_pattern(pr.pattern, rw, rh, 0, rw, st);
+  else if (pr.scaling == sh::Scaling::ShimmerlessGrid) {
+    std::vector<double> col, row;
+    sh::shimmer_grid_shading(rw, ds::SCREEN_W, 0, rw, col);
+    sh::shimmer_grid_shading(rh, ds::SCREEN_H, 0, rh, row);
+    sh::build_pattern_from(col, row, st);
+  }
+  std::vector<u32> view(static_cast<size_t>(rw) * rh);
+  if (auto rs = sh::make_resampler(pr.scaling)) {
+    rs->build(rw, rh, 0, rw);
+    rs->frame(src.data(), view.data(), rw, pr.curve == sh::Curve::Off && st.get() ? &st.rows : nullptr);
+  } else {
+    for (u32 y = 0; y < rh; ++y) {
+      u32* row = view.data() + static_cast<size_t>(y) * rw;
+      for (u32 x = 0; x < rw; ++x) row[x] = src[(y * ds::SCREEN_H / rh) * ds::SCREEN_W + x * ds::SCREEN_W / rw];
+      if (pr.curve == sh::Curve::Off && st.get() && !st.plain[st.row_class[y]]) sh::modulate_class(st.rows, st.row_class[y], row, row);
     }
-    std::copy(row.begin(), row.end(), out.begin() + static_cast<long>((static_cast<u32>(r.y) + y) * static_cast<u32>(w) + static_cast<u32>(r.x)));
+  }
+  std::vector<u32> map, curved(rw), lit(rw);
+  sh::build_curve_map(pr.curve, rw, rh, 0, rw, 0, rh, map);
+  for (u32 y = 0; y < rh; ++y) {
+    const u32* row = view.data() + static_cast<size_t>(y) * rw;
+    if (!map.empty()) {
+      // The pattern after the curve, as Display::curve_views() draws it.
+      sh::curve_row(map.data() + static_cast<size_t>(y) * rw, view.data(), rw, curved.data());
+      row = curved.data();
+      if (st.get()) { sh::modulate_class(st.rows, st.row_class[y], row, lit.data()); row = lit.data(); }
+    }
+    std::copy(row, row + rw, out.begin() + static_cast<long>((static_cast<u32>(r.y) + y) * static_cast<u32>(w) + static_cast<u32>(r.x)));
   }
   return out;
 }
@@ -334,6 +342,16 @@ int main(int argc, char** argv) {
         m.input(press(B::BTN_A));
         shot(p.scene);
       }
+      // Visual FX's SHADERS (ADVANCED) link, after SHADER PRESET.
+      int link = 0;
+      while (ds::sdl::kVideoSettings[link].key && std::strcmp(ds::sdl::kVideoSettings[link].key, "video.preset") != 0) ++link;
+      options_row(1);
+      m.input(press(B::BTN_A));
+      for (int i = 0; i <= link; ++i) m.input(press(B::BTN_DOWN));
+      m.input(press(B::BTN_A));
+      shot("shaders");
+      m.input(press(B::BTN_B));
+      for (int i = 0; i <= link; ++i) m.input(press(B::BTN_UP));
       options_row(7);
       m.input(press(B::BTN_A));
       m.input(press(B::BTN_DOWN));
@@ -358,35 +376,32 @@ int main(int argc, char** argv) {
       }
     }
   }
-  // Every preset rgds-core and libretro name, as the two rows draw it.
+  // Every SHADER PRESET (NextUI's, rgds-core's and the pak's own), and each
+  // SCALING, FILTER, GLOW and CURVE alone.
   {
     namespace sh = ds::sdl::shader;
-    using C = sh::Colour;
-    using P = sh::Pattern;
-    using G = sh::Glow;
-    const struct { const char* name; C c; P p; G g = G::Auto; } presets[] = {
-      {"off", C::Off, P::Off},
-      {"sharp_bilinear", C::Off, P::SharpBilinear}, {"lcd1x", C::Off, P::Lcd}, {"zfast_lcd", C::Off, P::ZfastLcd},
-      {"nds_color", C::Nds, P::Off}, {"natural_vision", C::NaturalVision, P::Off},
-      {"lcd1x+nds_color", C::Nds, P::Lcd}, {"lcd1x+natural_vision", C::NaturalVision, P::Lcd},
-      {"lcd1x+nds_color+natural_vision", C::NdsNaturalVision, P::Lcd},
-      {"zfast_lcd+nds_color", C::Nds, P::ZfastLcd}, {"sharp_bilinear+nds_color", C::Nds, P::SharpBilinear},
-      {"soft_scanlines", C::Off, P::Scanlines}, {"warm_paper", C::WarmPaper, P::Off}, {"cool_crisp", C::CoolCrisp, P::Off},
-      {"pocket_green", C::PocketGreen, P::Off}, {"amber", C::Amber, P::Off}, {"soft_lcd_grid", C::Off, P::SoftGrid},
-      {"ds_classic", C::DsClassic, P::DsClassic}, {"ds_lite", C::DsLite, P::DsLite},
-      {"natural_glow", C::Natural, P::Off}, {"vivid_lcd", C::Vivid, P::RgbStripes},
-      {"natural_smooth", C::Natural, P::Off}, {"vivid_smooth", C::Vivid, P::Off},
-      {"pixel_beads", C::Bold, P::Beads}, {"glossy_tiles", C::Bold, P::Tiles},
-      {"gba_color", C::Gba, P::Off}, {"gba_screen", C::Gba, P::Gba},
-      {"crt", C::Off, P::Crt},   // the pak's own, with its own halation
-      {"crt-no-glow", C::Off, P::Crt, G::Off},
-      {"glow", C::Off, P::Off, G::Glow}, {"bloom", C::Off, P::Off, G::Bloom}, {"halation", C::Off, P::Off, G::Halation},
-    };
+    std::vector<std::pair<std::string, sh::Preset>> scenes;
+    for (int i = 1; i < sh::kPresetCount; ++i) scenes.emplace_back(sh::kPresetTable[i].value, sh::kPresetTable[i]);
+    const sh::Preset plain = sh::kPresetTable[1];
+    for (int i = 1; i < sh::kScalingCount; ++i) {
+      sh::Preset p = plain; p.scaling = static_cast<sh::Scaling>(i);
+      scenes.emplace_back(std::string("scaling-") + sh::kScalings[i].value, p);
+    }
+    for (int i = 1; i < sh::kFilterCount; ++i) {
+      sh::Preset p = plain; p.filter = static_cast<sh::Filter>(i);
+      scenes.emplace_back(std::string("filter-") + sh::kFilters[i].value, p);
+    }
+    for (sh::Glow g : {sh::Glow::Glow, sh::Glow::Bloom, sh::Glow::Halation}) {
+      sh::Preset p = plain; p.glow = g;
+      scenes.emplace_back(sh::glow_name(g), p);
+    }
+    { sh::Preset p = sh::kPresetTable[sh::kPresetCount - 1]; p.glow = sh::Glow::Off; scenes.emplace_back("crt-no-glow", p); }
+    { sh::Preset p = plain; p.curve = sh::Curve::Barrel; scenes.emplace_back("curve-barrel", p); }
     const std::vector<u32> ds_px = ds_frame();
     for (const auto& size : {std::make_pair(640, 480), std::make_pair(1024, 768)})
-      for (const auto& pr : presets) {
-        const std::vector<u32> px = shade_frame(ds_px, size.first, size.second, pr.c, pr.p, pr.g);
-        const std::string path = out + "/shader-" + pr.name + "-" + std::to_string(size.first) + "x" + std::to_string(size.second) + ".png";
+      for (const auto& sc : scenes) {
+        const std::vector<u32> px = shade_frame(ds_px, size.first, size.second, sc.second);
+        const std::string path = out + "/shader-" + sc.first + "-" + std::to_string(size.first) + "x" + std::to_string(size.second) + ".png";
         if (!save_png(px, size.first, size.second, path)) { std::fprintf(stderr, "cannot write %s\n", path.c_str()); std::exit(1); }
         ++written;
       }

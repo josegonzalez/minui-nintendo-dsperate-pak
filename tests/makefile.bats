@@ -233,7 +233,7 @@ load test_helper
     mk MINUI_OVERLAY
     overlay="$output"
     for f in minui.h minui.cpp minui_gfx.h minui_gfx.cpp minui_menu.h minui_menu.cpp minui_pad.h minui_shader.h minui_shader.cpp \
-        minui_shader_presets.h minui_shortcuts.h minui_stb.cpp stb_image.h stb_truetype.h; do
+        minui_resample.h minui_resample.cpp minui_shader_presets.h minui_shortcuts.h minui_stb.cpp stb_image.h stb_truetype.h; do
         [[ " $overlay " == *" $f "* ]] || return 1
     done
     for f in $overlay; do
@@ -318,7 +318,7 @@ shortcut_table() {
 }
 
 @test "the shortcut table reads as one entry per line" {
-    [ "$(shortcut_table | wc -l)" -eq 22 ]
+    [ "$(shortcut_table | wc -l)" -eq 24 ]
     shortcut_table | grep -q '^pause.alt mod$'
     shortcut_table | grep -q '^pip_corner_next mod+start$'
 }
@@ -355,13 +355,13 @@ shortcut_table() {
 }
 
 @test "the shader shortcuts ship unbound and come after the game switcher" {
-    for key in colour_next colour_prev pattern_next pattern_prev; do
+    for key in colour_next colour_prev pattern_next pattern_prev preset_next preset_prev; do
         shortcut_table | grep -q "^$key none$" || return 1
     done
     # 0006 adds the actions to upstream's list after the one 0003 adds.
     p="$REPO_ROOT/patches/0006-shaders.patch"
-    grep -q '^+  GameSwitcher, ColourNext, ColourPrev, PatternNext, PatternPrev, Count$' "$p"
-    grep -q '"game_switcher", "colour_next", "colour_prev", "pattern_next", "pattern_prev"};$' "$p"
+    grep -q '^+  GameSwitcher, ColourNext, ColourPrev, PatternNext, PatternPrev, PresetNext, PresetPrev, Count$' "$p"
+    grep -q '"game_switcher", "colour_next", "colour_prev", "pattern_next", "pattern_prev", "preset_next", "preset_prev"};$' "$p"
 }
 
 @test "the shader patch is present, adds no files and leaves upstream's menu alone" {
@@ -370,15 +370,15 @@ shortcut_table() {
     ! grep -q "new file mode" "$p"
     ! grep -q '^diff --git a/src/frontend/sdl/menu\.' "$p"
     # The module and its suite are built where 0003's are.
-    grep -q '^+target_sources(dsperate PRIVATE minui_shader.cpp)$' "$p"
-    grep -q '^+add_executable(test_minui_shader minui_shader_test.cpp' "$p"
+    grep -q '^+target_sources(dsperate PRIVATE minui_shader.cpp minui_resample.cpp)$' "$p"
+    grep -q '^+add_executable(test_minui_shader minui_shader_test.cpp ../src/frontend/sdl/minui_shader.cpp ../src/frontend/sdl/minui_resample.cpp$' "$p"
     grep -q '^+add_test(NAME minui_shader COMMAND test_minui_shader)$' "$p"
     mk CTEST_EXCLUDE
     [[ "$output" != *shader* ]]
-    # Both keys documented in the reference config the pak ships.
-    grep -q '^+# colour = off' "$p"
-    grep -q '^+# pattern = off' "$p"
-    grep -q '^+# glow = auto' "$p"
+    # Every key documented in the reference config the pak ships.
+    for key in "preset = off" "colour = off" "scaling = off" "filter = off" "pattern = off" "glow = auto" "curve = off"; do
+        grep -q "^+# $key" "$p" || return 1
+    done
     # GLOW holds lines back through a filter in front of the rest of the scaler.
     grep -q '^+void Gpu::emit_line(int screen, u32 line, const u32\* src) {$' "$p"
 }
@@ -386,7 +386,7 @@ shortcut_table() {
 @test "the shaders keep the pow the ABI gate allows" {
     # std::pow would bind pow@GLIBC_2.29 on the newer toolchain; the core's
     # pow_compat.c pins the old symbol.
-    ! grep -q 'std::pow\|[^_]pow(' "$REPO_ROOT/overlay/minui_shader.cpp"
+    ! grep -q 'std::pow\|[^_]pow(' "$REPO_ROOT/overlay/minui_shader.cpp" "$REPO_ROOT/overlay/minui_resample.cpp"
     grep -q 'ds_pow_compat' "$REPO_ROOT/overlay/minui_shader.cpp"
 }
 
@@ -396,7 +396,15 @@ shortcut_table() {
         grep -q "$who" "$REPO_ROOT/THIRD_PARTY.md" || return 1
         grep -q "$who" "$REPO_ROOT/overlay/minui_shader.h" || return 1
     done
+    # NextUI's shaders, credited in the resampler's header as well.
+    for who in Fes zadpos decavoid "Team XBMC" "Stefanos A." "guest(r)" "Andrea Mazzoleni" DariusG RiskyJumps davej; do
+        grep -qF "$who" "$REPO_ROOT/THIRD_PARTY.md" || return 1
+    done
+    for who in Fes zadpos decavoid "Team XBMC" "guest(r)" "Andrea Mazzoleni" davej; do
+        grep -qF "$who" "$REPO_ROOT/overlay/minui_resample.h" || return 1
+    done
     grep -q 'GPL-2.0-or-later' "$REPO_ROOT/THIRD_PARTY.md"
+    grep -q 'PolyForm Noncommercial' "$REPO_ROOT/THIRD_PARTY.md"
     grep -q 'cp THIRD_PARTY.md $(DIST)/THIRD_PARTY.md' "$REPO_ROOT/Makefile"
 }
 
@@ -460,6 +468,7 @@ shortcut_table() {
     grep -q 'src/frontend/sdl/minui_menu.cpp' "$REPO_ROOT/Makefile"
     # And the shaders, through the core's pow.
     grep -q 'src/frontend/sdl/minui_shader.cpp' "$REPO_ROOT/Makefile"
+    grep -q 'src/frontend/sdl/minui_resample.cpp' "$REPO_ROOT/Makefile"
     grep -q 'src/core/gpu/pow_compat.c' "$REPO_ROOT/Makefile"
     grep -q '#include "frontend/sdl/minui_menu.h"' "$REPO_ROOT/scripts/render-menu.cpp"
     # The fonts are fetched at an exact commit and never vendored.

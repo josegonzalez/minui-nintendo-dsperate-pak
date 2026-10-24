@@ -74,8 +74,8 @@ DSP_H700_FIXED_GUID='19000000010000000100000000016e01'
 #   PROFILE_LABELS     the pause menu's names for buttons not labelled the
 #                      way SDL names them, as name=LABEL pairs, space separated
 #   PROFILE_SLOW_SHADERS
-#                      the Visual FX COLOUR and PATTERN values measured too slow
-#                      here, as colour:<name> and pattern:<name>, space
+#                      the shader values measured too slow here, as
+#                      colour:<name>, scaling:<name>, pattern:<name> and so on, space
 #                      separated. The pause menu says so beside them. Filled
 #                      from the "shader timing:" log lines (TECHNICAL.md)
 dsp_platform_profile() {

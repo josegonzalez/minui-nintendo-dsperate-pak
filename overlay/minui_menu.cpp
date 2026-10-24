@@ -44,7 +44,8 @@ int table_of(char c) {
 }
 
 
-const char* const kSettingsTitles[4] = {"Emulation", "Visual FX", "Layout", "DS Options"};
+const char* const kSettingsTitles[5] = {"Emulation", "Visual FX", "Layout", "DS Options", "Shaders"};
+const char* const kShadersLink = "SHADERS (ADVANCED)";
 
 // Filled, unsmoothed: the battery's bolt and the list's scroll arrows are a
 // few pixels across, where smoothing buys nothing.
@@ -341,8 +342,23 @@ std::vector<MinUiMenu::AccountRow> MinUiMenu::account_rows() const {
 }
 
 const Setting* MinUiMenu::table() const {
-  static const Setting* const kTables[4] = {kEmuSettings, kVideoSettings, kLayoutSettings, kUserSettings};
-  return kTables[std::clamp(set_table_, 0, 3)];
+  static const Setting* const kTables[5] = {kEmuSettings, kVideoSettings, kLayoutSettings, kUserSettings, kShaderSettings};
+  return kTables[std::clamp(set_table_, 0, kShaderTable)];
+}
+
+int MinUiMenu::link_row() const {
+  if (set_table_ != 1) return -1;
+  const Setting* t = table();
+  for (int i = 0; t[i].key; ++i) if (!std::strcmp(t[i].key, "video.preset")) return i + 1;
+  return -1;
+}
+
+int MinUiMenu::settings_rows() const { return settings_count(table()) + (link_row() >= 0 ? 1 : 0); }
+
+const Setting* MinUiMenu::setting_row(int i) const {
+  const int link = link_row();
+  if (link >= 0 && i == link) return nullptr;
+  return &table()[link >= 0 && i > link ? i - 1 : i];
 }
 
 bool MinUiMenu::list_page() const { return page() != Page::Root && page() != Page::TextEdit; }
@@ -398,7 +414,7 @@ void MinUiMenu::move_list(int dir) {
   switch (page()) {
   case Page::Root:     wrap(row_, static_cast<int>(root_items().size())); break;
   case Page::Options:  wrap(opt_row_, static_cast<int>(options().size())); break;
-  case Page::Settings: wrap(set_row_[set_table_], settings_count(table())); break;
+  case Page::Settings: wrap(set_row_[set_table_], settings_rows()); break;
   case Page::Controls: wrap(bind_row_, host_ ? static_cast<int>(control_rows().size()) : 0); reset_armed_ = false; break;
   case Page::Cheats:   move_cheat_row(dir); break;
   case Page::CheevosAccount: wrap(account_row_, static_cast<int>(account_rows().size())); break;
@@ -506,7 +522,9 @@ void MinUiMenu::open_option(Opt o) {
 }
 
 void MinUiMenu::step_setting(int dir) {
-  const Setting& s = table()[set_row_[set_table_]];
+  const Setting* row = setting_row(set_row_[set_table_]);
+  if (!row) return;
+  const Setting& s = *row;
   // A row the host has switched off can be selected, so its reason shows,
   // but it never steps.
   if (!host_->enabled(s)) return;
@@ -517,23 +535,34 @@ void MinUiMenu::step_setting(int dir) {
 }
 
 MinUiMenu::Result MinUiMenu::handle_settings(u32 presses) {
-  const int n = settings_count(table());
-  if (n <= 0) { if (hit(presses, B::BTN_B)) pop(); return Result::None; }
+  const int n = settings_rows();
+  // Back from the Shaders page lands on Visual FX's link row.
+  const auto back = [this] { if (set_table_ == kShaderTable) set_table_ = 1; pop(); };
+  if (n <= 0) { if (hit(presses, B::BTN_B)) back(); return Result::None; }
   int& row = set_row_[set_table_];
   row = std::clamp(row, 0, n - 1);
   if (hit(presses, B::BTN_UP))    move_list(-1);
   if (hit(presses, B::BTN_DOWN))  move_list(+1);
   if (hit(presses, B::BTN_L))     row = std::max(0, row - std::max(1, visible_));
   if (hit(presses, B::BTN_R))     row = std::min(n - 1, row + std::max(1, visible_));
+  if (row == link_row()) {
+    if (confirm(presses) || hit(presses, B::BTN_RIGHT)) {
+      set_table_ = kShaderTable;
+      set_row_[set_table_] = 0;
+      set_top_[set_table_] = 0;
+      push(Page::Settings);
+    } else if (hit(presses, B::BTN_B)) back();
+    return Result::None;
+  }
   if (hit(presses, B::BTN_LEFT))  step_setting(-1);
   if (hit(presses, B::BTN_RIGHT)) step_setting(+1);
   // A steps forward too, so the page can be worked with one button.
   if (confirm(presses)) {
-    const Setting& cur = table()[row];
+    const Setting& cur = *setting_row(row);
     if (cur.type == Setting::Type::Text && host_->enabled(cur)) open_text_edit();
     else step_setting(+1);
   }
-  if (hit(presses, B::BTN_B)) pop();
+  if (hit(presses, B::BTN_B)) back();
   return Result::None;
 }
 
@@ -704,7 +733,7 @@ MinUiMenu::Result MinUiMenu::handle_cheevos(u32 presses) {
 }
 
 void MinUiMenu::open_text_edit() {
-  const Setting& s = table()[set_row_[set_table_]];
+  const Setting& s = *setting_row(set_row_[set_table_]);
   edit_dest_ = EditDest::Setting;
   edit_key_ = s.key;
   edit_label_ = s.label;
@@ -1311,16 +1340,17 @@ void MinUiMenu::draw_options(Painter& p, const Metrics& m) const {
 }
 
 void MinUiMenu::draw_settings(Painter& p, const Metrics& m) const {
-  const Setting* t = table();
-  const int n = settings_count(t);
+  const int n = settings_rows();
   const int tiny = m.u(Metrics::FONT_TINY);
   std::vector<Row> rows;
   // The widest value any row could show, as minarch measures every choice,
   // so the list keeps its width while values are stepped.
   int value_w = 0;
   for (int i = 0; i < n; ++i) {
-    const Setting& s = t[i];
+    const Setting* row = setting_row(i);
     Row r;
+    if (!row) { r.label = kShadersLink; rows.push_back(r); continue; }   // the Shaders page's link
+    const Setting& s = *row;
     r.label = s.label;
     r.enabled = host_->enabled(s);
     r.value = r.enabled ? display_value(s, host_->get(s.key)) : "--";
@@ -1333,9 +1363,11 @@ void MinUiMenu::draw_settings(Painter& p, const Metrics& m) const {
   }
   const int sel = n > 0 ? std::clamp(set_row_[set_table_], 0, n - 1) : -1;
   std::vector<std::string> desc;
-  if (sel >= 0) {
-    const Setting& cur = t[sel];
-    const int w = p.canvas().w - m.u(m.padding * 2);
+  const int w = p.canvas().w - m.u(m.padding * 2);
+  if (sel >= 0 && !setting_row(sel)) {
+    desc = wrap(tiny, "COLOUR, SCALING, FILTER, PATTERN, GLOW AND CURVE ONE BY ONE. A CHANGE MAKES THE PRESET CUSTOM", w, 2);
+  } else if (sel >= 0) {
+    const Setting& cur = *setting_row(sel);
     const char* why = host_->disabled_reason(cur);
     const char* line = why && *why ? why : cur.note;
     // What it takes to see a change, as upstream's page says it.
@@ -1350,7 +1382,7 @@ void MinUiMenu::draw_settings(Painter& p, const Metrics& m) const {
     if (line && *line) desc = wrap(tiny, line, w, 2);
     if (!when.empty()) desc.push_back(when);
   }
-  draw_list(p, m, kSettingsTitles[std::clamp(set_table_, 0, 3)], rows, sel, set_top_[set_table_], desc, value_w);
+  draw_list(p, m, kSettingsTitles[std::clamp(set_table_, 0, kShaderTable)], rows, sel, set_top_[set_table_], desc, value_w);
 }
 
 void MinUiMenu::draw_controls(Painter& p, const Metrics& m) const {
@@ -1461,7 +1493,7 @@ bool MinUiMenu::slow_on_device(const char* key, const std::string& value) {
 }
 
 std::string MinUiMenu::setting_notice(const char* key, const std::string& value) {
-  for (const Setting* t : {kEmuSettings, kVideoSettings, kLayoutSettings, kUserSettings})
+  for (const Setting* t : {kEmuSettings, kVideoSettings, kLayoutSettings, kUserSettings, kShaderSettings})
     for (int i = 0, n = settings_count(t); i < n; ++i)
       if (std::strcmp(t[i].key, key) == 0) return std::string(t[i].label) + ": " + display_value(t[i], value);
   return value;

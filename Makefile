@@ -76,7 +76,8 @@ CROSS   := aarch64-nextui-linux-gnu-
 # The vendored MinUI sources the clone rule copies into src/frontend/sdl/, and
 # the ctest suite it copies into tests/. stb_*.h are nothings/stb, unmodified.
 MINUI_OVERLAY := minui.h minui.cpp minui_gfx.h minui_gfx.cpp minui_menu.h minui_menu.cpp \
-	minui_pad.h minui_shader.h minui_shader.cpp minui_shader_presets.h minui_shortcuts.h minui_stb.cpp \
+	minui_pad.h minui_resample.h minui_resample.cpp minui_shader.h minui_shader.cpp minui_shader_presets.h minui_shortcuts.h \
+	minui_stb.cpp \
 	stb_image.h stb_truetype.h
 MINUI_OVERLAY_TESTS := minui_menu_test.cpp minui_shader_test.cpp
 
@@ -269,7 +270,8 @@ screenshots: clone verify-pin
 	  $$CXX -std=c++17 -O2 -w -Isrc -c src/frontend/sdl/minui_stb.cpp -o $$O/minui_stb.o; \
 	  $$CXX -std=c++17 -O2 -Isrc -static-libstdc++ -static-libgcc /build/scripts/render-menu.cpp \
 	    src/frontend/sdl/minui_menu.cpp src/frontend/sdl/minui_gfx.cpp src/frontend/sdl/menu.cpp \
-	    src/frontend/sdl/settings.cpp src/frontend/sdl/minui_shader.cpp src/frontend/video/layout.cpp $$O/pow_compat.o \
+	    src/frontend/sdl/settings.cpp src/frontend/sdl/minui_shader.cpp src/frontend/sdl/minui_resample.cpp src/frontend/video/layout.cpp \
+	    $$O/pow_compat.o \
 	    $$O/minui_stb.o $$O/miniz.o $$O/miniz_tdef.o $$O/miniz_tinfl.o \
 	    -lm -pthread -o $$O/render-menu; \
 	  $$O/render-menu /build/build/screenshots $$F/BPreplayBold-unhinted.otf $$F/font1.ttf'

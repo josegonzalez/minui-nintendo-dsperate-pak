@@ -111,7 +111,7 @@ u8 to_byte(double v) { return static_cast<u8>(std::lround(clamp01(v) * 255.0)); 
 
 // ---- timing ----
 
-std::atomic<u64> g_colour_ns{0}, g_pattern_ns{0}, g_glow_ns{0};
+std::atomic<u64> g_colour_ns{0}, g_pattern_ns{0}, g_glow_ns{0}, g_scaling_ns{0}, g_filter_ns{0}, g_curve_ns{0};
 u64 now_ns() {
   timespec ts{};
   clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -133,14 +133,62 @@ bool parse_pattern(const std::string& v, Pattern& out) {
 const char* colour_name(Colour c) { return c < Colour::Count ? kColours[static_cast<u8>(c)].value : "off"; }
 const char* pattern_name(Pattern p) { return p < Pattern::Count ? kPatterns[static_cast<u8>(p)].value : "off"; }
 
-bool pattern_is_table(Pattern p) { return p != Pattern::Off && p != Pattern::SharpBilinear && p < Pattern::Count; }
+bool parse_scaling(const std::string& v, Scaling& out) {
+  for (u8 i = 0; i < kScalingCount; ++i) if (v == kScalings[i].value) { out = static_cast<Scaling>(i); return true; }
+  out = Scaling::Off;
+  return false;
+}
+bool parse_filter(const std::string& v, Filter& out) {
+  for (u8 i = 0; i < kFilterCount; ++i) if (v == kFilters[i].value) { out = static_cast<Filter>(i); return true; }
+  out = Filter::Off;
+  return false;
+}
+bool parse_curve(const std::string& v, Curve& out) {
+  for (u8 i = 0; i < kCurveCount; ++i) if (v == kCurves[i].value) { out = static_cast<Curve>(i); return true; }
+  out = Curve::Off;
+  return false;
+}
+
+const Preset* find_preset(const std::string& v) {
+  for (const Preset& p : kPresetTable) if (v == p.value) return &p;
+  return nullptr;
+}
+
+std::vector<std::pair<std::string, std::string>> preset_values(const Preset& p) {
+  std::vector<std::pair<std::string, std::string>> out = {
+    {"video.colour", kColours[static_cast<u8>(p.colour)].value},
+    {"video.scaling", kScalings[static_cast<u8>(p.scaling)].value},
+    {"video.filter", kFilters[static_cast<u8>(p.filter)].value},
+    {"video.pattern", kPatterns[static_cast<u8>(p.pattern)].value},
+    {"video.glow", kGlows[static_cast<u8>(p.glow)].value},
+    {"video.curve", kCurves[static_cast<u8>(p.curve)].value},
+  };
+  for (const char* k : kGlowNumberKeys) out.emplace_back(k, "auto");
+  return out;
+}
+
+bool preset_matches(const Preset& p, const std::function<std::string(const char*)>& get) {
+  for (const auto& kv : preset_values(p)) {
+    std::string v = get(kv.first.c_str());
+    // Unset rows are their defaults: GLOW and its numbers auto, the rest off.
+    if (v.empty()) v = kv.first.rfind("video.glow", 0) == 0 || kv.first == "video.bloom_threshold" ? "auto" : "off";
+    if (v != kv.second) return false;
+  }
+  return true;
+}
+
+bool pattern_is_table(Pattern p) { return p != Pattern::Off && p < Pattern::Count; }
+
+Tone pattern_tone(Pattern p) {
+  return p == Pattern::ZfastLcd ? Tone::ZfastGamma : p == Pattern::RetroV2 ? Tone::RetroV2 : Tone::None;
+}
 bool pattern_is_mask(Pattern p) {
   return p == Pattern::Lcd || p == Pattern::ZfastLcd || p == Pattern::Scanlines || p == Pattern::SoftGrid;
 }
 
 // ---- colour ----------------------------------------------------------------
 
-void colour_of(Colour k, bool gba_gamma, const double in[3], double out[3]) {
+void colour_of(Colour k, Tone tone, const double in[3], double out[3]) {
   double c[3] = {in[0], in[1], in[2]};
   switch (k) {
   case Colour::Off: case Colour::Count: break;
@@ -197,7 +245,8 @@ void colour_of(Colour k, bool gba_gamma, const double in[3], double out[3]) {
   }
   for (int i = 0; i < 3; ++i) {
     c[i] = clamp01(c[i]);
-    if (gba_gamma) c[i] *= 0.6 + 0.4 * c[i];
+    if (tone == Tone::ZfastGamma) c[i] *= 0.6 + 0.4 * c[i];
+    else if (tone == Tone::RetroV2) c[i] = powp(c[i], 2.4 / 2.2);
     out[i] = c[i];
   }
 }
@@ -222,23 +271,23 @@ void ColourTable::stop() {
   cancel_ = false;
 }
 
-void ColourTable::stage(Colour c, bool gba_gamma) {
+void ColourTable::stage(Colour c, Tone tone) {
   stop();   // a change before the last was done: start again
   pending_ = true;
   staged_colour_ = c;
-  staged_gamma_ = gba_gamma;
-  if ((c == Colour::Off || c >= Colour::Count) && !gba_gamma) { staged_ = -1; built_ = true; return; }
+  staged_tone_ = tone;
+  if ((c == Colour::Off || c >= Colour::Count) && tone == Tone::None) { staged_ = -1; built_ = true; return; }
   const int b = live_ == 0 ? 1 : 0;
   staged_ = b;
   built_ = false;
   std::vector<u32>& t = buf_[b];
   t.resize(COLOUR_ENTRIES);
-  build_ = std::thread([&t, c, gba_gamma, this] {
+  build_ = std::thread([&t, c, tone, this] {
     for (u32 i = 0; i < COLOUR_ENTRIES; ++i) {
       if ((i & 4095) == 0 && cancel_.load(std::memory_order_relaxed)) return;
       const double in[3] = {expand6((i >> 12) & 63) / 255.0, expand6((i >> 6) & 63) / 255.0, expand6(i & 63) / 255.0};
       double out[3];
-      colour_of(c, gba_gamma, in, out);
+      colour_of(c, tone, in, out);
       t[i] = 0xFF000000u | static_cast<u32>(to_byte(out[0])) << 16 | static_cast<u32>(to_byte(out[1])) << 8 | to_byte(out[2]);
     }
     built_.store(true, std::memory_order_release);
@@ -251,7 +300,7 @@ bool ColourTable::commit() {
   pending_ = false;
   live_ = staged_;
   live_colour_ = staged_colour_;
-  live_gamma_ = staged_gamma_;
+  live_tone_ = staged_tone_;
   return true;
 }
 
@@ -292,7 +341,7 @@ double edge(double f, double off, double w) { return clamp01((std::min(f, 1.0 - 
 } // namespace
 
 // The pattern for dark pixels; pattern_at adds the bright one.
-void pattern_at_dark(Pattern p, double fx, double fy, double ax, double ay, double mul[3], double add[3]);
+void pattern_at_dark(Pattern p, double fx, double fy, double ax, double ay, double mul[3], double add[3], const Place& at);
 
 bool pattern_spread(Pattern p, u8& lo, u8& hi) {
   // vivid_lcd: smoothstep(0.75, 1.0, dot(c, vec3(0.333))).
@@ -302,10 +351,11 @@ bool pattern_spread(Pattern p, u8& lo, u8& hi) {
   return false;
 }
 
-void pattern_at(Pattern p, double fx, double fy, double ax, double ay, double mul[3], double add[3], double bright[3]) {
+void pattern_at(Pattern p, double fx, double fy, double ax, double ay, double mul[3], double add[3], double bright[3], const Place* at) {
   double spare[3];
   if (!bright) bright = spare;
-  pattern_at_dark(p, fx, fy, ax, ay, mul, add);
+  const Place top_left;
+  pattern_at_dark(p, fx, fy, ax, ay, mul, add, at ? *at : top_left);
   for (int i = 0; i < 3; ++i) bright[i] = mul[i];
   const double s = clamp01(1.0 / std::max(ax, ay) - 1.0);
   if (p == Pattern::RgbStripes) {
@@ -322,7 +372,7 @@ void pattern_at(Pattern p, double fx, double fy, double ax, double ay, double mu
   }
 }
 
-void pattern_at_dark(Pattern p, double fx, double fy, double ax, double ay, double mul[3], double add[3]) {
+void pattern_at_dark(Pattern p, double fx, double fy, double ax, double ay, double mul[3], double add[3], const Place& at) {
   for (int i = 0; i < 3; ++i) { mul[i] = 1.0; add[i] = 0.0; }
   auto all = [&](double m) { for (int i = 0; i < 3; ++i) mul[i] = m; };
   const double aa = std::max(ax, ay);
@@ -335,7 +385,37 @@ void pattern_at_dark(Pattern p, double fx, double fy, double ax, double ay, doub
     }
   };
   switch (p) {
-  case Pattern::Off: case Pattern::SharpBilinear: case Pattern::Count: return;
+  case Pattern::Off: case Pattern::Count: return;
+  // NextUI's (skeleton/BASE/Shaders/glsl), as their own constants have them.
+  case Pattern::Lcd3x: {
+    // Gigaherz: one dark scanline per DS row, and blue against red and green across it.
+    const double yf = (6.0 + std::sin(2.0 * kPi * fy)) / 7.0, xs = std::sin(2.0 * kPi * fx);
+    mul[0] = mul[1] = yf * (24.0 + xs) / 25.0;
+    mul[2] = yf * (24.0 - xs) / 25.0;
+    return;
+  }
+  case Pattern::Scanline:
+    // A sine down each DS row, and a ripple that flips every panel column.
+    all(0.95 + 0.05 * std::sin(kPi * at.x) + 0.15 * std::sin(2.0 * kPi * fy));
+    return;
+  case Pattern::ResScanlines: case Pattern::ResScanlinesAuto: {
+    // A fixed number of lines over the view (224, or the DS's 192 on auto),
+    // counted up from its bottom as GL counts gl_FragCoord.
+    const double lines = p == Pattern::ResScanlines ? 224.0 : SCREEN_H;
+    const double angle = (at.h - at.y) / at.h * kPi * lines + 0.5;
+    all(std::fabs(1.25 * std::sin(angle)));
+    return;
+  }
+  case Pattern::RetroV2: {
+    // guest(r)'s: a light pixel with dark borders 0.16 of a DS pixel wide.
+    // Its 2.4 and 1/2.2 gammas leave c^(12/11), in the colour table, and
+    // the shading to the power 1/2.2 here.
+    auto border = [](double f, double ps) { return std::max(0.0, std::min(ps, clamp01(f + 0.5 * ps) - 0.84)) / ps; };
+    const double edge_x = border(fx, ax), edge_y = border(fy, ay);
+    const double m = mix(1.04 + fx * fy, 0.36, std::max(edge_x, edge_y));
+    all(powp(m, 1.0 / 2.2));
+    return;
+  }
   case Pattern::Lcd: {
     // lcd1x with rgds-core's brightening (BRIGHTEN_SCANLINES 24, BRIGHTEN_LCD 6).
     const double yf = (24.0 + std::sin(2.0 * kPi * (fy - 0.25))) / 25.0;
@@ -423,6 +503,10 @@ bool build_pattern(Pattern p, u32 w, u32 h, u32 x0, u32 x1, PatternStore& out) {
   const double ax = static_cast<double>(SCREEN_W) / w, ay = static_cast<double>(SCREEN_H) / h;
   std::vector<double> fx(n);
   for (u32 i = 0; i < n; ++i) fx[i] = run_phase(i + x0, w, SCREEN_W);
+  // Patterns placed down the view rather than by the DS pixel see a row's
+  // own place, so rows are classed by it as well (scanline's ripple is by
+  // column, which every row's table already has).
+  const bool placed = p == Pattern::ResScanlines || p == Pattern::ResScanlinesAuto;
   const size_t row_bytes = static_cast<size_t>(n) * 4;
   u8 lo = 0, hi = 255;
   const bool spread = pattern_spread(p, lo, hi);
@@ -431,12 +515,14 @@ bool build_pattern(Pattern p, u32 w, u32 h, u32 x0, u32 x1, PatternStore& out) {
   out.row_class.assign(h, 0);
   for (u32 y = 0; y < h; ++y) {
     const double fy = run_phase(y, h, SCREEN_H);
-    const auto hit = by_phase.find(fy);
+    const double key = placed ? fy + 2.0 * (y + 1) : fy;
+    const auto hit = by_phase.find(key);
     if (hit != by_phase.end()) { out.row_class[y] = hit->second; continue; }
     bool plain = true;
     for (u32 i = 0; i < n; ++i) {
       double m[3], a[3], b[3];
-      pattern_at(p, fx[i], fy, ax, ay, m, a, b);
+      const Place at{i + x0 + 0.5, y + 0.5, static_cast<double>(w), static_cast<double>(h)};
+      pattern_at(p, fx[i], fy, ax, ay, m, a, b, &at);
       // Pixel byte order: B, G, R, A. Alpha passes through at 1.0.
       u8* mb = &mul_row[static_cast<size_t>(i) * 4];
       u8* ab = &add_row[static_cast<size_t>(i) * 4];
@@ -459,7 +545,7 @@ bool build_pattern(Pattern p, u32 w, u32 h, u32 x0, u32 x1, PatternStore& out) {
       out.plain.push_back(plain ? 1 : 0);
       ++out.classes;
     }
-    by_phase[fy] = static_cast<u16>(c);
+    by_phase[key] = static_cast<u16>(c);
     out.row_class[y] = static_cast<u16>(c);
   }
   if (spread) { out.weight.resize(256); spread_weights(lo, hi, out.weight.data()); }
@@ -552,44 +638,32 @@ void modulate_class(const ds::gpu::Gpu::PatternRows& p, u32 cls, const u32* src,
   if (t0) g_pattern_ns.fetch_add(now_ns() - t0, std::memory_order_relaxed);
 }
 
-// ---- sharp bilinear ----------------------------------------------------------
+// ---- a resampler's own grid ---------------------------------------------------
 
-namespace {
-
-// sharp-bilinear (Themaister): where in texel space to sample, for the
-// panel pixel centred at texel position t, with a prescale of `scale`.
-double sharp_sample(double t, double scale) {
-  const double fl = std::floor(t), cd = t - fl - 0.5;
-  const double range = 0.5 - 0.5 / scale;
-  return fl + (cd - clampd(cd, -range, range)) * scale + 0.5;
-}
-
-} // namespace
-
-void build_sharp(u32 w, u32 h, u32 x0, u32 x1, std::vector<u16>& sx, std::vector<u8>& wx,
-                 std::vector<u16>& ystart, std::vector<u8>& wy) {
-  // libretro's automatic prescale: whole panel rows per DS row.
-  const double scale = std::max(1.0, std::floor(static_cast<double>(h) / SCREEN_H + 0.01));
-  const u32 n = x1 > x0 ? x1 - x0 : 0;
-  sx.assign(n, 0); wx.assign(n, 0);
-  for (u32 i = 0; i < n; ++i) {
-    // Between texel centres, as the bilinear kernel samples (upstream's edge rules).
-    const double u = sharp_sample((i + x0 + 0.5) * SCREEN_W / w, scale) - 0.5;
-    if (u <= 0.0) continue;
-    u32 s = static_cast<u32>(u), f = std::min<u32>(255, static_cast<u32>((u - s) * 256.0));
-    if (s >= SCREEN_W - 1) { s = SCREEN_W - 2; f = 255; }
-    sx[i] = static_cast<u16>(s); wx[i] = static_cast<u8>(f);
-  }
-  ystart.assign(SCREEN_H + 1, static_cast<u16>(h));
-  wy.assign(h, 0);
-  ystart[0] = 0;
-  u32 line = 1;
+bool build_pattern_from(const std::vector<double>& col, const std::vector<double>& row, PatternStore& out) {
+  out.clear();
+  const u32 n = static_cast<u32>(col.size()), h = static_cast<u32>(row.size());
+  if (!n || !h) return false;
+  const size_t row_bytes = static_cast<size_t>(n) * 4;
+  std::map<double, u16> by_value;
+  out.row_class.assign(h, 0);
   for (u32 y = 0; y < h; ++y) {
-    const double v = sharp_sample((y + 0.5) * SCREEN_H / h, scale) - 0.5;
-    // Line L owns the rows from the first whose sample reaches L - 1.
-    while (line <= SCREEN_H && v >= static_cast<double>(line) - 1.0) ystart[line++] = static_cast<u16>(y);
-    if (v > 0.0) wy[y] = static_cast<u8>(std::min<u32>(255, static_cast<u32>((v - std::floor(v)) * 256.0)));
+    const auto hit = by_value.find(row[y]);
+    if (hit != by_value.end()) { out.row_class[y] = hit->second; continue; }
+    const u16 c = static_cast<u16>(out.classes++);
+    bool plain = true;
+    for (u32 i = 0; i < n; ++i) {
+      const u8 m = q7(col[i] * row[y]);
+      out.mul.insert(out.mul.end(), {m, m, m, 128});
+      plain = plain && m == 128;
+    }
+    out.add.insert(out.add.end(), row_bytes, 0);
+    out.plain.push_back(plain ? 1 : 0);
+    by_value[row[y]] = c;
+    out.row_class[y] = c;
   }
+  out.rows = ds::gpu::Gpu::PatternRows{n, out.mul.data(), out.add.data(), out.row_class.data(), out.plain.data(), nullptr, nullptr};
+  return true;
 }
 
 // ---- the display engine's mask -------------------------------------------------
@@ -624,7 +698,7 @@ void draw_mask(Pattern p, u32* stage, int panel_w, int px0, int px1, int py0, in
         default: break;
       }
       double m[3], a[3];
-      pattern_at(p, fu, fv, ax, ay, m, a);
+      pattern_at(p, fu, fv, ax, ay, m, a, nullptr, nullptr);
       alpha[j * ux.size() + i] = static_cast<u32>(to_byte(1.0 - m[1])) << 24;
     }
   for (int y = 0; y < ph; ++y) {
@@ -736,7 +810,7 @@ void GlowFilter::push(u32 line, const u32* src) {
   if (t0) g_glow_ns.fetch_add(now_ns() - t0, std::memory_order_relaxed);
 }
 
-void GlowFilter::pull(u32 line, u32* out) const {
+void GlowFilter::pull(u32 line, u32* out) {
   const u64 t0 = timing_on() ? now_ns() : 0;
   const u32* c = &orig_[static_cast<size_t>(line % ring_) * SCREEN_W];
   // Down: the lines around this one, the first and last repeated past the
@@ -781,7 +855,7 @@ void GlowFilter::pull(u32 line, u32* out) const {
   if (t0) g_glow_ns.fetch_add(now_ns() - t0, std::memory_order_relaxed);
 }
 
-void GlowFilter::frame(const u32* src, u32* dst) {
+void LineFilter::frame(const u32* src, u32* dst) {
   if (!on()) { if (dst != src) std::memcpy(dst, src, sizeof(u32) * SCREEN_W * SCREEN_H); return; }
   const u32 d = delay();
   for (u32 l = 0; l < SCREEN_H; ++l) {
@@ -791,6 +865,24 @@ void GlowFilter::frame(const u32* src, u32* dst) {
   for (u32 l = SCREEN_H > d ? SCREEN_H - d : 0; l < SCREEN_H; ++l) pull(l, dst + static_cast<size_t>(l) * SCREEN_W);
 }
 
+void FilterChain::push(u32 line, const u32* src) {
+  const bool a = a_ && a_->on(), b = b_ && b_->on();
+  if (!a) { if (b) b_->push(line, src); return; }
+  if (!b) { a_->push(line, src); return; }
+  // The first's lines go on into the second as they come out of it.
+  alignas(16) u32 mid[SCREEN_W];
+  const u32 d = a_->delay();
+  a_->push(line, src);
+  if (line >= d) { a_->pull(line - d, mid); b_->push(line - d, mid); }
+  if (line + 1 == SCREEN_H)
+    for (u32 l = line + 1 > d ? line + 1 - d : 0; l < SCREEN_H; ++l) { a_->pull(l, mid); b_->push(l, mid); }
+}
+
+void FilterChain::pull(u32 line, u32* out) {
+  const bool b = b_ && b_->on();
+  if (b) b_->pull(line, out); else if (a_ && a_->on()) a_->pull(line, out);
+}
+
 // ---- timing ----------------------------------------------------------------
 
 bool timing_on() {
@@ -798,7 +890,12 @@ bool timing_on() {
   return on;
 }
 
-void timing_frame(u32 now_ms, Colour c, Pattern p, Glow g) {
+void timing_add_scaling(u64 ns) { g_scaling_ns.fetch_add(ns, std::memory_order_relaxed); }
+void timing_add_filter(u64 ns) { g_filter_ns.fetch_add(ns, std::memory_order_relaxed); }
+void timing_add_curve(u64 ns) { g_curve_ns.fetch_add(ns, std::memory_order_relaxed); }
+u64 timing_now() { return now_ns(); }
+
+void timing_frame(u32 now_ms, Colour c, Scaling sc, Filter f, Pattern p, Glow g, Curve v) {
   if (!timing_on()) return;
   static u32 frames = 0, mark = 0;
   static bool started = false;
@@ -808,8 +905,13 @@ void timing_frame(u32 now_ms, Colour c, Pattern p, Glow g) {
   const double colour_us = g_colour_ns.exchange(0) / 1000.0 / frames;
   const double pattern_us = g_pattern_ns.exchange(0) / 1000.0 / frames;
   const double glow_us = g_glow_ns.exchange(0) / 1000.0 / frames;
-  std::fprintf(stderr, "shader timing: colour %s %.0f us/frame, pattern %s %.0f us/frame, glow %s %.0f us/frame\n",
-               colour_name(c), colour_us, pattern_name(p), pattern_us, glow_name(g), glow_us);
+  const double scaling_us = g_scaling_ns.exchange(0) / 1000.0 / frames;
+  const double filter_us = g_filter_ns.exchange(0) / 1000.0 / frames;
+  const double curve_us = g_curve_ns.exchange(0) / 1000.0 / frames;
+  std::fprintf(stderr, "shader timing: colour %s %.0f us/frame, scaling %s %.0f us/frame, filter %s %.0f us/frame, "
+               "pattern %s %.0f us/frame, glow %s %.0f us/frame, curve %s %.0f us/frame\n",
+               colour_name(c), colour_us, kScalings[static_cast<u8>(sc)].value, scaling_us, kFilters[static_cast<u8>(f)].value, filter_us,
+               pattern_name(p), pattern_us, glow_name(g), glow_us, kCurves[static_cast<u8>(v)].value, curve_us);
   frames = 0;
   mark = now_ms;
 }

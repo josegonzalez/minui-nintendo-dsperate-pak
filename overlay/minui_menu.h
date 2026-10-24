@@ -238,8 +238,15 @@ private:
 
   int  opt_row_ = 0;
   int  set_table_ = 0;           // which Setting table the settings page shows
-  int  set_row_[4] = {};
-  mutable int set_top_[4] = {};
+  int  set_row_[5] = {};
+  mutable int set_top_[5] = {};
+  // Table 4 is the pak's Shaders (Advanced) page, opened from a row Visual FX
+  // carries after SHADER PRESET. The rows of the page shown, that link
+  // included: null for the link.
+  static constexpr int kShaderTable = 4;
+  int  settings_rows() const;
+  const Setting* setting_row(int i) const;
+  int  link_row() const;          // the link's row on this page, or -1
   mutable int opt_top_ = 0;
 
   SettingsHost* host_ = nullptr;

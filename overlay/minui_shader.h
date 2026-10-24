@@ -32,6 +32,11 @@
 //  - Natural Vision: ShadX, ported by Hyllian and parameterised by
 //    Sp00kyFox, with no licence stated, so its maths is written out here
 //    afresh rather than copied.
+//  - NextUI's patterns: lcd3x (Gigaherz, public domain), res-independent-
+//    scanlines (RiskyJumps, public domain), and scanline and retro-v2, which
+//    carry no author or notice in NextUI's copy.
+//  - NextUI's presets: which shaders each runs; NextUI is PolyForm
+//    Noncommercial, and none of its files is copied.
 #pragma once
 #include "frontend/sdl/minui_shader_presets.h"
 #include "core/gpu/gpu.h"
@@ -39,7 +44,9 @@
 
 #include <atomic>
 #include <cstddef>
+#include <functional>
 #include <string>
+#include <utility>
 #include <thread>
 #include <vector>
 
@@ -51,19 +58,37 @@ bool parse_pattern(const std::string& v, Pattern& out);
 const char* colour_name(Colour c);
 const char* pattern_name(Pattern p);
 
-// Drawn from per-view tables over the scaled rows (all but Off and SharpBilinear).
+// Drawn from per-view tables over the scaled rows (all but Off).
 bool pattern_is_table(Pattern p);
 // Only ever darkens, the same in every channel: the display engine can draw
 // it as a black overlay with per-pixel alpha.
 bool pattern_is_mask(Pattern p);
 
+bool parse_scaling(const std::string& v, Scaling& out);
+bool parse_filter(const std::string& v, Filter& out);
+bool parse_curve(const std::string& v, Curve& out);
+
+// ---- presets ---------------------------------------------------------------
+
+// SHADER PRESET (kPresetTable). Null for an unknown name.
+const Preset* find_preset(const std::string& v);
+// The rows a preset sets, as the ini has them: the six, then GLOW's numbers back to auto.
+std::vector<std::pair<std::string, std::string>> preset_values(const Preset& p);
+// Whether the rows, read through `get` ("" is the row's default), are the preset's.
+bool preset_matches(const Preset& p, const std::function<std::string(const char*)>& get);
+
 // ---- colour ----------------------------------------------------------------
 
-// The colour of a pixel, each channel 0..1, in double precision. `gba_gamma`
-// is zfast_lcd's "fake gamma" (c * (0.6 + 0.4c)), which the frontend folds in
-// here whenever that pattern is drawn, so it lands before the pattern's border
-// rather than after it.
-void colour_of(Colour c, bool gba_gamma, const double in[3], double out[3]);
+// A pattern's own tone, which the frontend folds into the colour table
+// whenever that pattern is drawn, since it changes a pixel's colour rather
+// than its place: zfast_lcd's "fake gamma" c * (0.6 + 0.4c), and retro-v2's
+// c^2.4 in and ^(1/2.2) out, c^(12/11) on its own. Each lands before the
+// pattern rather than after it, which only changes its darkened parts.
+enum class Tone : u8 { None, ZfastGamma, RetroV2 };
+Tone pattern_tone(Pattern p);
+
+// The colour of a pixel, each channel 0..1, in double precision.
+void colour_of(Colour c, Tone tone, const double in[3], double out[3]);
 
 // Index into a colour table: the top 6 bits of each channel of 0xAARRGGBB,
 // which are the 6 the DS drew (the output stage widens them to 8 by repeating
@@ -86,16 +111,16 @@ public:
   ColourTable(const ColourTable&) = delete;
   ColourTable& operator=(const ColourTable&) = delete;
   ~ColourTable();
-  void stage(Colour c, bool gba_gamma);
+  void stage(Colour c, Tone tone);
   bool commit();   // true when the table changed
   void finish();   // stage()'s build, waited for and committed
   // What the last stage() asked for, committed or not.
-  bool wants(Colour c, bool gba_gamma) const {
-    return pending_ ? staged_colour_ == c && staged_gamma_ == gba_gamma : live_colour_ == c && live_gamma_ == gba_gamma;
+  bool wants(Colour c, Tone tone) const {
+    return pending_ ? staged_colour_ == c && staged_tone_ == tone : live_colour_ == c && live_tone_ == tone;
   }
   const u32* lut() const { return live_ < 0 ? nullptr : buf_[live_].data(); }   // null: nothing to do
   Colour colour() const { return live_colour_; }
-  bool gba_gamma() const { return live_gamma_; }
+  Tone tone() const { return live_tone_; }
   // `n` pixels of a whole frame copy (the paths that never reach the scaler).
   void apply(const u32* src, u32* dst, size_t n) const;
 private:
@@ -106,7 +131,7 @@ private:
   std::atomic<bool> built_{false}, cancel_{false};
   void stop();   // a build still going is abandoned
   Colour live_colour_ = Colour::Off, staged_colour_ = Colour::Off;
-  bool live_gamma_ = false, staged_gamma_ = false;
+  Tone live_tone_ = Tone::None, staged_tone_ = Tone::None;
 };
 
 // ---- pattern ---------------------------------------------------------------
@@ -118,7 +143,14 @@ private:
 // `bright`, when asked for, is the multiplier for the brightest pixels; a
 // pattern that spreads (pattern_spread) blends between the two by a pixel's
 // brightness, and for the others the two are the same.
-void pattern_at(Pattern p, double fx, double fy, double ax, double ay, double mul[3], double add[3], double bright[3] = nullptr);
+//
+// A few NextUI patterns depend on where the panel pixel is in the view rather
+// than in its DS pixel (scanline's column-by-column ripple, res-independent
+// scanlines' fixed count of lines): `at` places it, the centre of column x and
+// row y of a view w x h. Without one they take the view's top-left pixel.
+struct Place { double x = 0.5, y = 0.5, w = 1.0, h = 1.0; };
+void pattern_at(Pattern p, double fx, double fy, double ax, double ay, double mul[3], double add[3], double bright[3] = nullptr,
+                const Place* at = nullptr);
 // Whether `p` changes with a pixel's brightness, and over which range of the
 // channels' mean it moves from mul to bright (smoothstep, 0..255): `crt`'s
 // beam widens as it brightens, and `rgb_stripes` drops its stripes on
@@ -154,11 +186,10 @@ namespace ref { void modulate_row(const u32* src, const u8* mul, const u8* brigh
 // Gpu::ScaleTarget::modulate: row class `cls` of `p` over src.
 void modulate_class(const ds::gpu::Gpu::PatternRows& p, u32 cls, const u32* src, u32* dst);
 
-// sharp-bilinear's sample positions for the bilinear path: `sx`/`wx` over the
-// drawn columns as Gpu::ScaleTarget::lin_sx/lin_wx, and the rows as
-// lin_ystart (SCREEN_H + 1 entries) and lin_wy (rect_h entries).
-void build_sharp(u32 rect_w, u32 rect_h, u32 x0, u32 x1, std::vector<u16>& sx, std::vector<u8>& wx,
-                 std::vector<u16>& ystart, std::vector<u8>& wy);
+// A pattern of multipliers alone from a view's columns and rows, the same
+// in every channel: mul = col[x] * row[y]. For a resampler's own grid
+// (sharp-shimmerless-grid), whose shading follows its own sample geometry.
+bool build_pattern_from(const std::vector<double>& col, const std::vector<double>& row, PatternStore& out);
 
 // A mask pattern over a panel rectangle of the display engine's overlay
 // layer, `stage` being panel_w wide. [px0, px1) x [py0, py1) shows nx x ny
@@ -190,19 +221,45 @@ bool parse_glow(const std::string& v, Glow& out);
 const char* glow_name(Glow g);
 constexpr int GLOW_MAX_RADIUS = 8;
 
-// One screen's glow. configure() between frames; push and pull on whichever
-// thread scales that screen, in line order; frame() for a whole frame copy.
-class GlowFilter {
+// A filter over the lines around each one, at DS resolution: what the
+// scaler's Gpu::ScaleTarget::filter_* run. push() each line in order; line L
+// comes back from pull() once line L + delay() went in, the last ones once
+// line 191 did. configure between frames; push and pull on whichever thread
+// scales that screen; frame() runs a whole frame copy through it.
+class LineFilter {
+public:
+  virtual ~LineFilter() = default;
+  virtual bool on() const = 0;
+  virtual u32 delay() const = 0;
+  virtual void push(u32 line, const u32* src) = 0;
+  virtual void pull(u32 line, u32* out) = 0;
+  void frame(const u32* src, u32* dst);
+  static void push_hook(void* self, u32 line, const u32* src) { static_cast<LineFilter*>(self)->push(line, src); }
+  static void pull_hook(void* self, u32 line, u32* out) { static_cast<LineFilter*>(self)->pull(line, out); }
+};
+
+// Two filters one after the other: FILTER, then GLOW over what it gives.
+class FilterChain final : public LineFilter {
+public:
+  void set(LineFilter* first, LineFilter* second) { a_ = first; b_ = second; }
+  bool on() const override { return (a_ && a_->on()) || (b_ && b_->on()); }
+  u32 delay() const override { return (a_ && a_->on() ? a_->delay() : 0) + (b_ && b_->on() ? b_->delay() : 0); }
+  void push(u32 line, const u32* src) override;
+  void pull(u32 line, u32* out) override;
+private:
+  LineFilter* a_ = nullptr;
+  LineFilter* b_ = nullptr;
+};
+
+// One screen's glow.
+class GlowFilter final : public LineFilter {
 public:
   void configure(const GlowSpec& s);
-  bool on() const { return spec_.kind != Glow::Off && spec_.strength > 0.0 && r_ > 0; }
+  bool on() const override { return spec_.kind != Glow::Off && spec_.strength > 0.0 && r_ > 0; }
   const GlowSpec& spec() const { return spec_; }
-  u32 delay() const { return static_cast<u32>(r_); }
-  void push(u32 line, const u32* src);
-  void pull(u32 line, u32* out) const;
-  void frame(const u32* src, u32* dst);
-  static void push_hook(void* self, u32 line, const u32* src) { static_cast<GlowFilter*>(self)->push(line, src); }
-  static void pull_hook(void* self, u32 line, u32* out) { static_cast<GlowFilter*>(self)->pull(line, out); }
+  u32 delay() const override { return static_cast<u32>(r_); }
+  void push(u32 line, const u32* src) override;
+  void pull(u32 line, u32* out) override;
 private:
   GlowSpec spec_;
   int r_ = 0;
@@ -220,6 +277,11 @@ private:
 // themselves, and once a frame the frontend calls timing_frame(), which
 // logs the average every five seconds.
 bool timing_on();
-void timing_frame(u32 now_ms, Colour c, Pattern p, Glow g);
+void timing_frame(u32 now_ms, Colour c, Scaling s, Filter f, Pattern p, Glow g, Curve v);
+// The resamplers', filters' and curve's own counters (minui_resample.cpp).
+void timing_add_scaling(u64 ns);
+void timing_add_filter(u64 ns);
+void timing_add_curve(u64 ns);
+u64 timing_now();
 
 } // namespace ds::sdl::shader

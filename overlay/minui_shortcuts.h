@@ -44,6 +44,8 @@ inline constexpr Shortcut kShortcuts[] = {
   {"colour_prev", "Previous colour", "none", "none"},
   {"pattern_next", "Next pattern", "none", "none"},
   {"pattern_prev", "Previous pattern", "none", "none"},
+  {"preset_next", "Next shader preset", "none", "none"},
+  {"preset_prev", "Previous shader preset", "none", "none"},
 };
 inline constexpr int kShortcutCount = static_cast<int>(sizeof kShortcuts / sizeof kShortcuts[0]);
 

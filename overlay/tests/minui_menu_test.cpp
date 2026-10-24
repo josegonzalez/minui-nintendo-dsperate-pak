@@ -375,22 +375,43 @@ void test_options_hide_what_is_absent() {
   CHECK(bare.input(press(B::BTN_A)) == Menu::Result::Reset);
 }
 
+// The Visual FX row after SHADER PRESET is the link to the Shaders page.
+int shaders_link_row() {
+  for (int i = 0; ds::sdl::kVideoSettings[i].key; ++i)
+    if (!std::strcmp(ds::sdl::kVideoSettings[i].key, "video.preset")) return i + 1;
+  return -1;
+}
+
+// Opens the Shaders page through Visual FX's link row.
+void to_shaders(MinUiMenu& m) {
+  to_options(m, kVisualFx);
+  m.input(press(B::BTN_A));
+  for (int i = 0; i < shaders_link_row(); ++i) m.input(press(B::BTN_DOWN));
+  m.input(press(B::BTN_A));
+}
+
 // Each settings page walks upstream's own table to its terminator, so a row
 // upstream adds appears here without a change. Right steps the row under the
-// cursor; down past the last wraps to the first, as minarch's lists do.
+// cursor; down past the last wraps to the first, as minarch's lists do. The
+// pak's Shaders page walks its own table the same way, and Visual FX's link
+// to it is passed over.
 void test_settings_walk_upstream_tables() {
-  const ds::sdl::Setting* tables[] = {ds::sdl::kEmuSettings, ds::sdl::kVideoSettings, ds::sdl::kLayoutSettings, ds::sdl::kUserSettings};
-  const int rows[] = {kEmulation, kVisualFx, kLayout, kDsOptions};
-  for (int t = 0; t < 4; ++t) {
+  const ds::sdl::Setting* tables[] = {ds::sdl::kEmuSettings, ds::sdl::kVideoSettings, ds::sdl::kLayoutSettings, ds::sdl::kUserSettings, ds::sdl::kShaderSettings};
+  const int rows[] = {kEmulation, kVisualFx, kLayout, kDsOptions, -1};
+  for (int t = 0; t < 5; ++t) {
     FakeHost h;
     MinUiMenu m(true);
     m.set_settings_host(&h);
-    to_options(m, rows[t]);
-    m.input(press(B::BTN_A));
+    if (rows[t] < 0) to_shaders(m);
+    else {
+      to_options(m, rows[t]);
+      m.input(press(B::BTN_A));
+    }
     CHECK(m.page() == Page::Settings);
     const int n = ds::sdl::settings_count(tables[t]);
     CHECK(n > 0);
     for (int i = 0; i < n; ++i) {
+      if (tables[t] == ds::sdl::kVideoSettings && i == shaders_link_row()) m.input(press(B::BTN_DOWN));
       const ds::sdl::Setting& s = tables[t][i];
       if (s.type != ds::sdl::Setting::Type::Text) {
         const size_t before = h.writes.size();
@@ -1305,33 +1326,58 @@ void test_setting_notice() {
   CHECK(MinUiMenu::setting_notice("video.nothing", "pip") == "pip");
 }
 
-// The pak's COLOUR and PATTERN rows come up on the Visual FX page, step from
-// off, and say when the value is one this device is too slow for, while
-// still letting it be picked. The four shortcuts that step them ship unbound.
+// Visual FX has SHADER PRESET after BILINEAR, then the link to the Shaders
+// page, where the pak's COLOUR, SCALING, FILTER, PATTERN, GLOW and CURVE rows
+// step from their defaults and say when the value is one this device is too
+// slow for, while still letting it be picked. B goes back to the link. The
+// shortcuts that step them ship unbound.
 void test_shader_rows() {
-  int colour = -1;
+  const int link = shaders_link_row();
+  CHECK(link > 0);
+  CHECK(!std::strcmp(ds::sdl::kVideoSettings[link - 2].key, "video.linear"));
   for (int i = 0; ds::sdl::kVideoSettings[i].key; ++i)
-    if (!std::strcmp(ds::sdl::kVideoSettings[i].key, "video.colour")) colour = i;
-  CHECK(colour > 0);
-  CHECK(!std::strcmp(ds::sdl::kVideoSettings[colour - 1].key, "video.linear"));
-  CHECK(!std::strcmp(ds::sdl::kVideoSettings[colour + 1].key, "video.pattern"));
+    CHECK(std::strcmp(ds::sdl::kVideoSettings[i].key, "video.colour") != 0);
+  const char* const order[] = {"video.colour", "video.scaling", "video.filter", "video.pattern", "video.glow"};
+  for (int i = 0; i < 5; ++i) CHECK(!std::strcmp(ds::sdl::kShaderSettings[i].key, order[i]));
   FakeHost h;
   MinUiMenu m(true);
   m.set_settings_host(&h);
   to_options(m, kVisualFx);
   m.input(press(B::BTN_A));
-  for (int i = 0; i < colour; ++i) m.input(press(B::BTN_DOWN));
+  for (int i = 0; i < link - 1; ++i) m.input(press(B::BTN_DOWN));
+  m.input(press(B::BTN_RIGHT));
+  CHECK(h.writes.back() == "video.preset");
+  m.input(press(B::BTN_DOWN));
+  draw_everywhere(m, "the shaders link");
+  const size_t before = h.writes.size();
+  m.input(press(B::BTN_LEFT));                                       // the link steps nothing
+  CHECK(h.writes.size() == before);
+  m.input(press(B::BTN_A));
+  CHECK(m.page() == Page::Settings);
   m.input(press(B::BTN_RIGHT));
   CHECK(h.kv["video.colour"] == "nds");
   m.input(press(B::BTN_DOWN));
   m.input(press(B::BTN_RIGHT));
-  CHECK(h.kv["video.pattern"] == "sharp_bilinear");
-  draw_everywhere(m, "the visual fx page with a pattern");
+  CHECK(h.kv["video.scaling"] == "sharp_bilinear");
+  m.input(press(B::BTN_DOWN));
+  m.input(press(B::BTN_DOWN));
+  m.input(press(B::BTN_RIGHT));
+  CHECK(h.kv["video.pattern"] == "lcd");
+  draw_everywhere(m, "the shaders page with a pattern");
   // A switched-off PATTERN row is still drawn, and does not step.
   h.off["video.pattern"] = true;
   m.input(press(B::BTN_RIGHT));
-  CHECK(h.kv["video.pattern"] == "sharp_bilinear");
-  draw_everywhere(m, "the visual fx page with the pattern off");
+  CHECK(h.kv["video.pattern"] == "lcd");
+  draw_everywhere(m, "the shaders page with the pattern off");
+  h.off.erase("video.pattern");
+  // B goes back to Visual FX on the link, and RIGHT opens the page again at its top.
+  m.input(press(B::BTN_B));
+  CHECK(m.page() == Page::Settings);
+  m.input(press(B::BTN_LEFT));
+  CHECK(h.writes.back() == "video.pattern");                         // still the link: nothing written
+  m.input(press(B::BTN_RIGHT));
+  m.input(press(B::BTN_LEFT));
+  CHECK(h.kv["video.colour"] == "off");
 
   unsetenv("MINUI_SLOW_SHADERS");
   CHECK(!MinUiMenu::slow_on_device("video.colour", "nds"));
@@ -1341,14 +1387,12 @@ void test_shader_rows() {
   CHECK(!MinUiMenu::slow_on_device("video.pattern", "nds"));
   CHECK(!MinUiMenu::slow_on_device("video.colour", "gba"));
   CHECK(!MinUiMenu::slow_on_device("emu.speed", "nds"));
-  m.input(press(B::BTN_UP));
-  m.input(press(B::BTN_LEFT));
   m.input(press(B::BTN_RIGHT));
   CHECK(h.kv["video.colour"] == "nds");   // offered all the same
   draw_everywhere(m, "a value too slow for the device");
   unsetenv("MINUI_SLOW_SHADERS");
 
-  for (const char* key : {"colour_next", "colour_prev", "pattern_next", "pattern_prev"}) {
+  for (const char* key : {"colour_next", "colour_prev", "pattern_next", "pattern_prev", "preset_next", "preset_prev"}) {
     bool found = false;
     for (const auto& s : ds::sdl::minui_shortcuts::kShortcuts)
       if (!std::strcmp(s.key, key)) { found = true; CHECK(!std::strcmp(s.chord, "none") && !std::strcmp(s.upstream, "none")); }
@@ -1357,9 +1401,9 @@ void test_shader_rows() {
   CHECK(MinUiMenu::setting_notice("video.colour", "ds_classic") == "COLOUR: DS CLASSIC");
   CHECK(MinUiMenu::setting_notice("video.pattern", "scanlines") == "PATTERN: SCANLINES");
   CHECK(MinUiMenu::setting_notice("video.glow", "halation") == "GLOW: HALATION");
+  CHECK(MinUiMenu::setting_notice("video.curve", "barrel") == "CURVE: BARREL");
   // GLOW and its numbers step from auto.
-  m.input(press(B::BTN_DOWN));
-  m.input(press(B::BTN_DOWN));
+  for (int i = 0; i < 4; ++i) m.input(press(B::BTN_DOWN));
   m.input(press(B::BTN_RIGHT));
   CHECK(h.kv["video.glow"] == "off");
   m.input(press(B::BTN_DOWN));
