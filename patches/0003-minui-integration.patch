@@ -133,7 +133,7 @@ index 49935b7..868c77d 100644
    // Rebinding, for the Controls page.
    bool has_pad() const { return pad_ != nullptr; }
 diff --git a/src/frontend/sdl/main.cpp b/src/frontend/sdl/main.cpp
-index 7f4e371..379403d 100644
+index 7f4e371..2e5a3cb 100644
 --- a/src/frontend/sdl/main.cpp
 +++ b/src/frontend/sdl/main.cpp
 @@ -40,6 +40,8 @@
@@ -217,7 +217,62 @@ index 7f4e371..379403d 100644
    FILE* f = std::fopen(path.c_str(), "rb");
    if (!f) return {};
    std::fclose(f);
-@@ -1801,6 +1825,13 @@ sdl_ready:
+@@ -1661,6 +1685,54 @@ sdl_ready:
+       if (dual_window) display2.draw(fb);
+     }
+   };
++  // Quit fades the game to black, as the pico-8 pak's does, rather than
++  // leaving a still frame up while the state is written and the launcher
++  // starts again. From the brightness on screen: half, when the pause menu
++  // was over it, which goes at the first step. The last frame stays black.
++  auto fade_out = [&](bool from_menu) {
++    constexpr int FADE_STEPS = 8;
++    constexpr u32 FADE_STEP_MS = 20;
++    const u32 start = from_menu ? 128 : 256;
++    for (int step = 1; step <= FADE_STEPS; ++step) {
++      const u32 k = start * static_cast<u32>(FADE_STEPS - step) / FADE_STEPS;
++      const u32* fb[2];
++      for (int i = 0; i < 2; ++i) {
++        const u32* src = nds.gpu.framebuffer(i);
++        u32* dst = menu_fb[i].data();
++        for (size_t j = 0; j < menu_fb[i].size(); ++j) {
++          const u32 c = src[j];
++          dst[j] = 0xFF000000 | ((((c & 0xFF00FF) * k) >> 8) & 0xFF00FF) | ((((c & 0x00FF00) * k) >> 8) & 0x00FF00);
++        }
++        fb[i] = dst;
++      }
++      ds::sdl::Display::Target target[2] = {};
++      if (dual_window) sync_dual_modes(display, display2);
++      bool scaled = display.begin_frame(target);
++      if (dual_window) scaled = display2.begin_frame(target) && scaled;
++      // The display-engine tier keeps the menu on an overlay layer of its
++      // own, which nothing else clears now.
++      ds::sdl::Display::CanvasView cv;
++      if (display.disp() && display.canvas(cv)) {
++        for (int y = 0; y < cv.h; ++y) std::memset(cv.px + static_cast<size_t>(y) * cv.pitch, 0, static_cast<size_t>(cv.w) * 4);
++        display.note_canvas_draw_all();
++      }
++      if (scaled) {
++        set_scale_targets(target, true, true);
++        for (int i = 0; i < 2; ++i) nds.gpu.scale_image(i, menu_fb[i].data());
++        display.finish_views();
++        if (dual_window) display2.finish_views();
++        display.present();
++        if (dual_window) display2.present();
++        set_scale_targets(target, false);
++      } else {
++        display.draw(fb);
++        if (dual_window) display2.draw(fb);
++      }
++      display.flush();
++      if (dual_window) display2.flush();
++      SDL_Delay(FADE_STEP_MS);
++    }
++  };
+   bool rom_cancelled = false;   // the last load_rom_notice was stopped with B
+   // Loads a ROM with an "unpacking" notice if it takes more than a moment.
+   // Load runs on a worker; this thread pumps events (B/quit cancels) and
+@@ -1801,6 +1873,13 @@ sdl_ready:
      if (!nds.rom_zip_entry.empty()) VLOG("zip: %s\n", nds.rom_zip_entry.c_str());
    }
    Session session;
@@ -231,7 +286,7 @@ index 7f4e371..379403d 100644
    session.open(nds, cfg, rom_path, save_arg);
  
    cfg.set("video.aa", aa_on(cfg.str("video.aa", "false")) ? "true" : "false");
-@@ -1838,7 +1869,7 @@ sdl_ready:
+@@ -1838,7 +1917,7 @@ sdl_ready:
    // replay/recording, since the log runs inputs from boot.
    const std::string autoload = load_state || log.reading() || log.writing()
                                     ? std::string()
@@ -240,7 +295,7 @@ index 7f4e371..379403d 100644
    if (load_state || !autoload.empty()) {
      const char* start_state = load_state ? load_state : autoload.c_str();
      bool got_layout = false;
-@@ -1853,6 +1884,8 @@ sdl_ready:
+@@ -1853,6 +1932,8 @@ sdl_ready:
      }
    }
    startup_off_rt.reset();
@@ -249,7 +304,7 @@ index 7f4e371..379403d 100644
    ds::sdl::Lid lid;
    if (!replay) lid.open();
    std::vector<s16> mic, mic_raw, mic_queue;
-@@ -2006,7 +2039,11 @@ sdl_ready:
+@@ -2006,7 +2087,11 @@ sdl_ready:
    constexpr int PIP_FADE_STEP = 24;                          // ~10 frames rest to opaque
    int pip_alpha = static_cast<int>(layout.pip_alpha * 255.0 + 0.5), pip_hold = 0;
    // The pause menu (menu.h) and the two screen copies it is composited into.
@@ -262,7 +317,7 @@ index 7f4e371..379403d 100644
    menu.set_cheats(&nds.cheats.codes, &session.cheats.groups);
    session.load_enabled(nds);
    // DSI NAND LINKS: a .dspr.nds shortcut file per DSiWare title on
-@@ -2057,7 +2094,7 @@ sdl_ready:
+@@ -2057,7 +2142,7 @@ sdl_ready:
    // picture, taken from fb_ after one deliberately unscaled frame.
    bool shot_pending = false;
    // Slot kAutoSlot is the auto state, which the slot page lists for deletion.
@@ -271,7 +326,7 @@ index 7f4e371..379403d 100644
    auto refresh_slots = [&] { for (int i = 0; i <= Menu::kAutoSlot; ++i) {
      FILE* f = std::fopen(slot_path(i).c_str(), "rb");
      menu.set_slot_used(i, f != nullptr);
-@@ -2109,6 +2146,21 @@ sdl_ready:
+@@ -2109,6 +2194,21 @@ sdl_ready:
    // Whether fb_ holds the last run frame's picture (true after an unscaled
    // frame; false after a scanline-tier frame written straight to the panel).
    bool fb_current = false;
@@ -293,7 +348,7 @@ index 7f4e371..379403d 100644
    auto autosave_now = [&] {
      // net_live: quitting would otherwise leave a state resuming a dead conversation.
      if (!autosave || save_readonly || log.writing() || net_live) return;
-@@ -2119,12 +2171,12 @@ sdl_ready:
+@@ -2119,12 +2219,12 @@ sdl_ready:
        nds.run_frame();
        fb_current = true;
      }
@@ -308,7 +363,7 @@ index 7f4e371..379403d 100644
      if (write_png(nds, png, display.current_layout())) std::fprintf(stderr, "state: thumbnail %s\n", png.c_str());
    };
    Disp::Layout loaded_layout = layout; bool got_layout = false;   // from `layout`: a state carries no pip_alpha, the config's stays
-@@ -2627,6 +2679,7 @@ sdl_ready:
+@@ -2627,6 +2727,7 @@ sdl_ready:
    Toast toast_now;
    int toast_left = 0;
    ds::sdl::Rect toast_last{};          // what the canvas has to take back out
@@ -316,7 +371,7 @@ index 7f4e371..379403d 100644
    constexpr int TOAST_FRAMES = 240;    // four seconds: long enough to read two lines
    constexpr int TOAST_INFO_FRAMES = 150;
    // DSi state loaded without an SD card. Twice a toast's time.
-@@ -3174,7 +3227,7 @@ sdl_ready:
+@@ -3174,7 +3275,7 @@ sdl_ready:
      // After the battery save, so the state's SRAM wins; never during replay/recording.
      if (const std::string a = log.reading() || log.writing()
                                    ? std::string()
@@ -325,7 +380,7 @@ index 7f4e371..379403d 100644
          !a.empty() && load_state_file(nds, a, loaded_layout, got_layout)) {
        std::fprintf(stderr, "state: autoloaded %s\n", a.c_str());
        apply_loaded_layout();
-@@ -3207,9 +3260,10 @@ sdl_ready:
+@@ -3207,9 +3308,10 @@ sdl_ready:
        case Menu::Result::Save:
          if (net_live) std::fprintf(stderr, "state: not during a network session\n");
          else if (save_readonly) std::fprintf(stderr, "state: not during a replay\n");
@@ -337,7 +392,7 @@ index 7f4e371..379403d 100644
          }
          refresh_slots();
          break;
-@@ -3218,10 +3272,11 @@ sdl_ready:
+@@ -3218,10 +3320,11 @@ sdl_ready:
          if (save_readonly) { std::fprintf(stderr, "state: not during a replay\n"); break; }
          if (log.writing()) { std::fprintf(stderr, "state: not while recording\n"); break; }
          // A load leaves the menu too: the player wants to see where they landed.
@@ -350,7 +405,7 @@ index 7f4e371..379403d 100644
            menu.set_open(false);
            set_paused(false);
            audio.clear();
-@@ -3237,6 +3292,7 @@ sdl_ready:
+@@ -3237,6 +3340,7 @@ sdl_ready:
          if (std::remove(path.c_str()) != 0) std::fprintf(stderr, "state: cannot delete %s: %s\n", path.c_str(), std::strerror(errno));
          else std::fprintf(stderr, "state: deleted %s\n", path.c_str());
          if (menu.doomed_slot() == Menu::kAutoSlot) { std::string png = path; png.replace(png.size() - 3, 3, "png"); std::remove(png.c_str()); }
@@ -358,7 +413,7 @@ index 7f4e371..379403d 100644
          if (menu.doomed_slot() == menu.slot()) g_state_refused.clear();
          refresh_slots();
          break;
-@@ -3280,11 +3336,41 @@ sdl_ready:
+@@ -3280,11 +3384,41 @@ sdl_ready:
    // for the ones started lazily.
    ds::place_current_thread(ds::ThreadRole::Emu);
    ds::place_foreign_threads();
@@ -400,7 +455,7 @@ index 7f4e371..379403d 100644
      for (ds::sdl::Action a : input.take_actions()) {
        using A = ds::sdl::Action;
        switch (a) {
-@@ -3316,6 +3402,7 @@ sdl_ready:
+@@ -3316,6 +3450,7 @@ sdl_ready:
          apply_visibility();
          menu_dirty = true;
          VLOG("layout: %s\n", Disp::mode_name(l.mode));
@@ -408,7 +463,7 @@ index 7f4e371..379403d 100644
          if (!session.game_ini.empty()) ds::sdl::Config::store(session.game_ini, "video.layout", Disp::mode_name(l.mode));
          break;
        }
-@@ -3325,6 +3412,7 @@ sdl_ready:
+@@ -3325,6 +3460,7 @@ sdl_ready:
            display.set_only_screen(vs.layout.primary);
            display2.set_only_screen(1 - vs.layout.primary);
            menu_dirty = true;
@@ -416,7 +471,7 @@ index 7f4e371..379403d 100644
            if (!session.game_ini.empty()) ds::sdl::Config::store(session.game_ini, "video.screen", vs.layout.primary ? "bottom" : "top");
            break;
          }
-@@ -3333,6 +3421,7 @@ sdl_ready:
+@@ -3333,6 +3469,7 @@ sdl_ready:
          display.set_layout(l);
          apply_visibility();
          menu_dirty = true;
@@ -424,7 +479,7 @@ index 7f4e371..379403d 100644
          if (!session.game_ini.empty()) ds::sdl::Config::store(session.game_ini, "video.screen", l.primary ? "bottom" : "top");
          break;
        }
-@@ -3342,10 +3431,34 @@ sdl_ready:
+@@ -3342,10 +3479,34 @@ sdl_ready:
          l.corner = static_cast<Disp::Corner>((static_cast<int>(l.corner) + 1) % static_cast<int>(Disp::Corner::Count));
          display.set_layout(l);
          menu_dirty = true;
@@ -460,7 +515,7 @@ index 7f4e371..379403d 100644
        case A::Lid: input.set_lid(!input.lid()); VLOG("lid: %s\n", input.lid() ? "closed" : "open"); if (input.lid()) flush_save(); break;
        case A::SlotNext: state_slot = (state_slot + 1) % 10; show_slot(std::to_string(state_slot)); VLOG("state slot %d\n", state_slot); break;
        case A::SlotPrev: state_slot = (state_slot + 9) % 10; show_slot(std::to_string(state_slot)); VLOG("state slot %d\n", state_slot); break;
-@@ -3353,8 +3466,9 @@ sdl_ready:
+@@ -3353,8 +3514,9 @@ sdl_ready:
          // A state freezes the machine mid-conversation, but nothing restores a network session.
          if (net_live) { std::fprintf(stderr, "state: not during a network session\n"); break; }
          if (save_readonly) { std::fprintf(stderr, "state: not during a replay\n"); break; }
@@ -471,7 +526,7 @@ index 7f4e371..379403d 100644
            show_slot("STATE " + std::to_string(state_slot) + " SAVED");
          }
          break;
-@@ -3362,12 +3476,13 @@ sdl_ready:
+@@ -3362,12 +3524,13 @@ sdl_ready:
          if (net_live) { std::fprintf(stderr, "state: not during a network session\n"); break; }
          if (save_readonly) { std::fprintf(stderr, "state: not during a replay\n"); break; }
          if (log.writing()) { std::fprintf(stderr, "state: not while recording\n"); break; }
@@ -486,7 +541,7 @@ index 7f4e371..379403d 100644
            show_slot("STATE " + std::to_string(state_slot) + " LOADED");
            sd_note_toast();
          }
-@@ -3711,6 +3826,9 @@ sdl_ready:
+@@ -3711,6 +3874,9 @@ sdl_ready:
        const bool fps_field = !fps_text.empty();
        const u32 flash_alpha = flash_left > 0 ? static_cast<u32>(255 * flash_left / FLASH_FRAMES) : 0;
        if (flash_left > 0) --flash_left;
@@ -496,7 +551,7 @@ index 7f4e371..379403d 100644
        // Overlays follow Layout::primary to stay where the player's
        // looking. Dual window has no primary, so top screen.
        const Disp::Layout& osd_l = display.current_layout();
-@@ -3729,6 +3847,12 @@ sdl_ready:
+@@ -3729,6 +3895,12 @@ sdl_ready:
            const auto note = [&](const ds::sdl::Rect& r) { display.note_canvas_draw(r.x, r.y, r.w, r.h); };
            if (slot_osd) note(draw_label(c, slot_text.c_str(), false));
            if (fps_field) note(draw_label(c, fps_text.c_str(), true));
@@ -509,7 +564,7 @@ index 7f4e371..379403d 100644
            if (menu_over_live) { menu.draw(c); display.note_canvas_draw_all(); }
            // Toast's area must be handed back even the frame it stops drawing.
            if (toast_on()) {
-@@ -3757,6 +3881,7 @@ sdl_ready:
+@@ -3757,6 +3929,7 @@ sdl_ready:
            const ds::sdl::Canvas c = tgt_canvas(target[osd_screen]);
            if (slot_osd) draw_label(c, slot_text.c_str(), false);
            if (fps_field) draw_label(c, fps_text.c_str(), true);
@@ -517,7 +572,7 @@ index 7f4e371..379403d 100644
            if (menu_over_live) menu.draw(c);
            if (toast_on()) draw_toast_on(c);
            if (flash_alpha) for (int i = 0; i < 2; ++i) if (target[i].px) draw_flash(tgt_canvas(target[i]), flash_alpha);
-@@ -3773,13 +3898,14 @@ sdl_ready:
+@@ -3773,13 +3946,14 @@ sdl_ready:
          // Overlay layer where there is one: labels go on the panel's own
          // pixels. Flash stays below: on the overlay it'd upload every frame.
          ds::sdl::Display::CanvasView ocv;
@@ -533,7 +588,7 @@ index 7f4e371..379403d 100644
            if (toast_on()) { draw_toast_on(c); display.note_canvas_draw_all(); }
            if (menu_over_live) { menu.draw(c); display.note_canvas_draw_all(); }
          }
-@@ -3789,6 +3915,7 @@ sdl_ready:
+@@ -3789,6 +3963,7 @@ sdl_ready:
            const ds::sdl::Canvas od = ds_canvas(osd_fb.data());
            if (slot_osd) draw_label(od, slot_text.c_str(), false);
            if (fps_field) draw_label(od, fps_text.c_str(), true);
@@ -541,7 +596,7 @@ index 7f4e371..379403d 100644
            if (toast_on()) draw_toast_on(od);
            if (menu_over_live) menu.draw(od);
            fb[osd_screen] = osd_fb.data();
-@@ -3827,7 +3954,8 @@ sdl_ready:
+@@ -3827,7 +4002,8 @@ sdl_ready:
      audio.push(nds, fast || limiter_off);
      if (shot_pending && present) {
        shot_pending = false;
@@ -551,7 +606,7 @@ index 7f4e371..379403d 100644
        flash_left = FLASH_FRAMES;   // from the next frame: this one is already on the panel and in the file
      }
      if (pause_pending && present) {
-@@ -4003,8 +4131,13 @@ sdl_ready:
+@@ -4003,8 +4179,15 @@ sdl_ready:
      }
    }
  
@@ -559,13 +614,15 @@ index 7f4e371..379403d 100644
 +  // while the auto state is written.
 +  minui.mark("quitting");
 +  audio.pause(true);
++  // Not on a signal: whoever sent it is taking the panel back.
++  if (minui.active() && !g_signalled) fade_out(menu.open());
    autosave_now();
    flush_save();
 +  minui.mark("saved");
    discard_session_cache();
    // Not after a DSiWare session: nothing a DSi title wrote belongs beside the DS firmware.
    if (!fw_override.empty() && nds.firmware_override_dirty() && !nds.dsi) {
-@@ -4063,6 +4196,7 @@ sdl_ready:
+@@ -4063,6 +4246,7 @@ sdl_ready:
    }
    log.close();
    ds::prof::report();

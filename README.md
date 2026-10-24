@@ -101,7 +101,7 @@ The pause menu looks and works like the one every other system on the card uses:
 - Save: Saves a state to the slot shown. Left and right pick one of eight slots, and the window beside the list shows what each one holds.
 - Load: Loads the state in the slot shown.
 - Options: Every setting DSperate has, as lists: Emulation, Visual FX, Layout, Controls, Shortcuts and DS Options, then Cheats and Achievements when the game has them, Manage Save Slots to delete states, Save Changes to choose whether changes apply to every game or only this one, and Reset Game.
-- Quit: Returns to the launcher.
+- Quit: Fades the screen to black and returns to the launcher. The quit shortcut fades out the same way.
 
 On NextUI the menu follows the theme colours and font chosen in NextUI's settings. On MinUI it uses MinUI's own look.
 
