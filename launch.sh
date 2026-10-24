@@ -54,7 +54,7 @@ dsp_init_env() {
     MINUI_SHARED_DIR="$SHARED_USERDATA_PATH/.minui"
     MINUI_DIR="$MINUI_SHARED_DIR/DSP"
     export MINUI_SHARED_DIR MINUI_DIR
-    MINUI_ROM_FILE="$(basename "$ROM_PATH")"
+    MINUI_ROM_FILE="${ROM_PATH##*/}"
     export MINUI_ROM_FILE
     # The profile the config was seeded from, which the pause menu's
     # Shortcuts page restores its defaults from.
@@ -98,8 +98,19 @@ dsp_export_pad_mapping() {
         return 0
     }
 
-    _guid="$(echo "$_guid_out" | sed -n '1p')"
-    _name="$(echo "$_guid_out" | sed -n '2p')"
+    # Two lines, the GUID and the name, split without a process apiece.
+    _guid="${_guid_out%%
+*}"
+    _name=""
+    case "$_guid_out" in
+    *"
+"*)
+        _name="${_guid_out#*
+}"
+        _name="${_name%%
+*}"
+        ;;
+    esac
     [ -n "$_guid" ] || return 0
     [ -n "$_name" ] || _name="Controller"
 
@@ -147,8 +158,12 @@ dsp_seed_config() {
         return 0
     fi
 
-    if [ -f "$DSP_DEVICE_FILE" ] && [ "$(cat "$DSP_DEVICE_FILE")" = "$PROFILE_INI" ]; then
-        return 0
+    if [ -f "$DSP_DEVICE_FILE" ]; then
+        _seeded=""
+        read -r _seeded <"$DSP_DEVICE_FILE" || true
+        if [ "$_seeded" = "$PROFILE_INI" ]; then
+            return 0
+        fi
     fi
 
     echo "Seeding DSperate config from the $PROFILE_INI profile"
@@ -170,59 +185,6 @@ dsp_seed_config() {
     sync
 }
 
-# Prints what a key holds under [padhotkeys], and fails when it is not there.
-# One under [hotkeys] is the keyboard's and does not count.
-dsp_padhotkey_value() {
-    awk -v key="$1" '
-        /^[[:space:]]*\[/ { section = $0; gsub(/[[:space:]]/, "", section); next }
-        section != "[padhotkeys]" { next }
-        {
-            eq = index($0, "=")
-            if (!eq) next
-            k = substr($0, 1, eq - 1)
-            v = substr($0, eq + 1)
-            gsub(/^[[:space:]]+|[[:space:]]+$/, "", k)
-            gsub(/^[[:space:]]+|[[:space:]]+$/, "", v)
-            if (k == key) { found = 1; value = v }
-        }
-        END { if (found) print value; exit !found }
-    ' "$DSP_CONFIG"
-}
-
-# Whether any [padhotkeys] key already holds this chord.
-dsp_padhotkey_taken() {
-    awk -v chord="$1" '
-        /^[[:space:]]*\[/ { section = $0; gsub(/[[:space:]]/, "", section); next }
-        section != "[padhotkeys]" { next }
-        {
-            eq = index($0, "=")
-            if (!eq) next
-            v = substr($0, eq + 1)
-            gsub(/^[[:space:]]+|[[:space:]]+$/, "", v)
-            if (v == chord) found = 1
-        }
-        END { exit !found }
-    ' "$DSP_CONFIG"
-}
-
-# Adds a key under [padhotkeys] once. A key the player already has there,
-# "none" included, is left alone.
-dsp_add_padhotkey() {
-    if dsp_padhotkey_value "$1" >/dev/null; then
-        return 0
-    fi
-
-    echo "Adding $1 = $2 under [padhotkeys] in $DSP_CONFIG"
-    if grep -q '^[[:space:]]*\[padhotkeys\][[:space:]]*$' "$DSP_CONFIG"; then
-        awk -v line="$1 = $2" '
-            { print }
-            !done && /^[[:space:]]*\[padhotkeys\][[:space:]]*$/ { print line; done = 1 }
-        ' "$DSP_CONFIG" >"$DSP_CONFIG.tmp" && mv -f "$DSP_CONFIG.tmp" "$DSP_CONFIG"
-    else
-        printf '\n[padhotkeys]\n%s = %s\n' "$1" "$2" >>"$DSP_CONFIG"
-    fi
-}
-
 # The profiles are seeded once, so a config from an older pak gains what the
 # profiles have since added, once:
 #   - a bare MENU tap opens the pause menu, as it does in minarch;
@@ -232,17 +194,55 @@ dsp_add_padhotkey() {
 #   - the state and slot chords are off, as they ship now;
 #   - the mic blow is off, rather than upstream's default of L3, which the
 #     stick profiles also give the pen's tap.
-# Anything the player set for these keys themselves is left alone.
+# Anything the player set for these keys themselves is left alone, and a key
+# under [hotkeys] is the keyboard's and does not count. One awk pass, which
+# leaves the file untouched when there is nothing to add: this runs on every
+# launch, and each process costs the slower devices tens of milliseconds.
 dsp_migrate_config() {
     [ -f "$DSP_CONFIG" ] || return 0
 
-    dsp_add_padhotkey pause.alt mod
-    if dsp_padhotkey_value pause >/dev/null && ! dsp_padhotkey_taken mod+start; then
-        dsp_add_padhotkey pip_corner_next mod+start
+    if awk -v out="$DSP_CONFIG.tmp" -v path="$DSP_CONFIG" '
+        function trim(s) { gsub(/^[[:space:]]+|[[:space:]]+$/, "", s); return s }
+        function want(k, v) {
+            if (k in has) return
+            has[k] = 1
+            adds[++m] = k " = " v
+        }
+        { lines[++n] = $0 }
+        /^[[:space:]]*\[/ {
+            section = $0
+            gsub(/[[:space:]]/, "", section)
+            if (section == "[padhotkeys]" && !header) header = n
+            next
+        }
+        section == "[padhotkeys]" && index($0, "=") {
+            eq = index($0, "=")
+            has[trim(substr($0, 1, eq - 1))] = 1
+            taken[trim(substr($0, eq + 1))] = 1
+        }
+        END {
+            want("pause.alt", "mod")
+            if (("pause" in has) && !("mod+start" in taken)) want("pip_corner_next", "mod+start")
+            want("save_state", "none")
+            want("load_state", "none")
+            want("slot_next", "none")
+            want("slot_prev", "none")
+            want("mic", "none")
+            if (!m) exit 1
+            for (i = 1; i <= n; i++) {
+                print lines[i] > out
+                if (i == header) for (j = 1; j <= m; j++) print adds[j] > out
+            }
+            if (!header) {
+                print "" > out
+                print "[padhotkeys]" > out
+                for (j = 1; j <= m; j++) print adds[j] > out
+            }
+            for (j = 1; j <= m; j++) printf "Adding %s under [padhotkeys] in %s\n", adds[j], path
+        }
+    ' "$DSP_CONFIG"; then
+        mv -f "$DSP_CONFIG.tmp" "$DSP_CONFIG"
     fi
-    for _key in save_state load_state slot_next slot_prev mic; do
-        dsp_add_padhotkey "$_key" none
-    done
 }
 
 # The pause menu dresses itself as the launcher that started it. NextUI keeps
@@ -260,9 +260,28 @@ dsp_detect_style() {
 
     if [ -f "$_settings" ] && [ -f "$_res/font1.ttf" ]; then
         MINUI_STYLE="nextui"
+        # Read in the shell, last line winning as NextUI's own reader does,
+        # rather than a sed pipeline per key: this runs on every launch.
+        _font=""
+        _notify=""
+        for _i in 1 2 3 4 5 6 7; do
+            eval "_colour$_i="
+        done
+        _cr="$(printf '\r')"
+        while IFS= read -r _line || [ -n "$_line" ]; do
+            _line="${_line%"$_cr"}"
+            case "$_line" in
+            font=*) _font="${_line#font=}" ;;
+            notifyScreenshot=*) _notify="${_line#notifyScreenshot=}" ;;
+            color[1-7]=*)
+                _i="${_line%%=*}"
+                eval "_colour${_i#color}=\${_line#*=}"
+                ;;
+            esac
+        done <"$_settings"
+
         # NextUI's own reading of font=: 0 is font2 and 1 is font1 (older
         # releases wrote the number), anything else is a file name.
-        _font="$(sed -n 's/^font=//p' "$_settings" | tail -n 1 | tr -d '\r')"
         case "$_font" in
         0) _font="font2.ttf" ;;
         "" | 1) _font="font1.ttf" ;;
@@ -270,12 +289,12 @@ dsp_detect_style() {
         [ -f "$_res/$_font" ] || _font="font1.ttf"
         MINUI_FONT="$_res/$_font"
 
-        if [ "$(sed -n 's/^notifyScreenshot=//p' "$_settings" | tail -n 1 | tr -d '\r')" = "0" ]; then
+        if [ "$_notify" = "0" ]; then
             MINUI_NOTIFY_SCREENSHOT=0
         fi
 
         for _i in 1 2 3 4 5 6 7; do
-            _colour="$(sed -n "s/^color$_i=//p" "$_settings" | tail -n 1 | tr -d '\r')"
+            eval "_colour=\$_colour$_i"
             if [ -n "$_colour" ]; then
                 eval "MINUI_COLOR$_i=\$_colour"
                 export "MINUI_COLOR$_i"
