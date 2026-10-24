@@ -59,17 +59,19 @@ struct Host final : ds::sdl::SettingsHost {
   std::vector<std::string> collisions() const override { return {}; }
   const char* user_settings_note() const override { return nullptr; }
 
+  // As upstream hands them over: Input::pad_label's spellings.
   const std::vector<std::pair<const char*, const char*>> kBinds = {
-    {"A", "b"}, {"B", "a"}, {"X", "y"}, {"Y", "x"}, {"L", "leftshoulder"}, {"R", "rightshoulder"},
-    {"START", "start"}, {"SELECT", "back"}, {"UP", "dpup"}, {"DOWN", "dpdown"}, {"LEFT", "dpleft"},
-    {"RIGHT", "dpright"}, {"QUIT", "mod+a"}, {"PAUSE", "mod+y"}, {"FAST FORWARD", "+righttrigger"},
+    {"A", "\x02 EAST"}, {"B", "\x01 SOUTH"}, {"X", "\x04 NORTH"}, {"Y", "\x03 WEST"}, {"L", "L1"}, {"R", "R1"},
+    {"START", "START"}, {"SELECT", "SELECT"}, {"UP", "UP"}, {"DOWN", "DOWN"}, {"LEFT", "LEFT"},
+    {"RIGHT", "RIGHT"}, {"QUIT", "NONE"}, {"PAUSE", "NONE"},
+    {"PAUSE (2)", "MOD"}, {"FAST_FORWARD", "R2"}, {"SCREEN_SWAP", "MOD+L2"},
   };
   // The shipped profiles' [padhotkeys], for the Shortcuts page.
   const std::map<std::string, std::string> kHot = {
-    {"padhotkeys.quit", "mod+a"}, {"padhotkeys.pause", "mod+y"}, {"padhotkeys.pause.alt", "mod"},
-    {"padhotkeys.fast_forward_toggle", "mod++righttrigger"}, {"padhotkeys.layout_next", "mod+dpup"},
-    {"padhotkeys.layout_prev", "mod+dpdown"}, {"padhotkeys.screen_swap", "mod++lefttrigger"},
-    {"padhotkeys.screenshot", "none"}, {"padhotkeys.fps", "mod+x"}, {"padhotkeys.game_switcher", "mod+back"},
+    {"padhotkeys.quit", "none"}, {"padhotkeys.pause", "none"}, {"padhotkeys.pause.alt", "mod"},
+    {"padhotkeys.fast_forward_toggle", "none"}, {"padhotkeys.layout_next", "none"},
+    {"padhotkeys.layout_prev", "none"}, {"padhotkeys.screen_swap", "mod++lefttrigger"},
+    {"padhotkeys.screenshot", "none"}, {"padhotkeys.fps", "none"}, {"padhotkeys.game_switcher", "mod+back"},
     {"padhotkeys.mic", "none"}, {"padhotkeys.lid", "none"},
     {"padhotkeys.pip_corner_next", "mod+start"}, {"padhotkeys.save_state", "none"},
     {"padhotkeys.load_state", "none"}, {"padhotkeys.slot_next", "none"}, {"padhotkeys.slot_prev", "none"},

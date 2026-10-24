@@ -296,8 +296,16 @@ load test_helper
 @test "every profile opens the pause menu on a bare MENU tap" {
     for f in "$REPO_ROOT"/config/dsperate/*.ini; do
         sed -n '/^\[padhotkeys\]/,/^\[/p' "$f" | grep -q '^pause.alt = mod$' || return 1
-        # MENU+Y still works.
-        sed -n '/^\[padhotkeys\]/,/^\[/p' "$f" | grep -q '^pause = mod+y$' || return 1
+    done
+}
+
+@test "every profile binds only the swap, pip and switcher chords" {
+    for f in "$REPO_ROOT"/config/dsperate/*.ini; do
+        chords="$(sed -n '/^\[padhotkeys\]/,/^\[/p' "$f" | grep '^[a-z_.]* = mod+' | cut -d' ' -f1 | sort | tr '\n' ' ')"
+        [ "$chords" = "game_switcher pip_corner_next screen_swap " ] || {
+            echo "$f binds $chords"
+            return 1
+        }
     done
 }
 

@@ -106,6 +106,10 @@ public:
   // A [padhotkeys] value as the Shortcuts page shows it: "MENU+R1", "L2",
   // "MENU" for the modifier's tap, NONE. Needs the settings host.
   std::string binding_label(const std::string& value) const;
+  // A Controls page pad value, which upstream spells with a position pip
+  // and compass point ("\x02 EAST"), FUNC BTN and MOD, the way the Shortcuts
+  // page spells it: "A", "MENU+B".
+  std::string controls_label(const std::string& value) const;
 
   // A pill at the top of the game naming what a hotkey just changed, held
   // for kNoticeHoldMs and faded over kNoticeFadeMs. `now_ms` is wall time

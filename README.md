@@ -64,34 +64,32 @@ Delete `device.txt` to have the profile applied again. Your previous config is k
 MENU acts as the modifier for every chord. Pressed and released on its own, it opens the pause menu.
 
 - MENU: Pause menu, and MENU or B again to close it
-- MENU + A: Quit
-- MENU + Y: Pause menu
-- MENU + Up / Down: Cycle screen layout
-- MENU + X: Toggle the FPS counter
 - MENU + L2: Swap which screen is the large one
 - MENU + START: Move the small screen of the pip layout to the next corner
-- MENU + R2: Toggle fast forward
 - MENU + SELECT: Save and open NextUI's game switcher, which shows the game's picture with A to resume it and B to go back to the game list. Stock MinUI has no game switcher, so there it saves and quits.
 - R2 (two-stick and one-stick devices): Hold for fast forward
 - L2: Tap the stylus at the pen's position
 - R2 (no-stick devices): Hold to move the pen with the d-pad
 
-Changing the layout, swapping the screens or moving the small screen shows the new setting's name at the top of the screen for a few seconds. The choice is remembered for that game.
+Swapping the screens or moving the small screen shows the new setting's name at the top of the screen for a few seconds. The choice is remembered for that game.
 
 The pause menu's Options > Shortcuts page changes any of these the way NextUI's does: press A on a row, then press a button. Holding MENU while pressing it makes a MENU + button chord. X clears the row, and Y twice puts back the defaults for your device. The page can also move every chord from MENU to another button. These are there too, and are off by default:
 
-- MENU + R1: Save state
-- MENU + L1: Load state
-- MENU + Left / Right: Pick the state slot
-- MENU + B: Screenshot
-- MENU + L3 (MENU + F1 on the Brick): Hold to blow into the mic
-- MENU + R3 (MENU + F2 on the Brick): Close or open the lid
+- Pause menu as a chord
+- Quit
+- Next and previous screen layout, which also show the layout's name at the top of the screen
+- FPS counter
+- Fast forward toggle
+- Screenshot
+- Save state, load state and the state slot
+- Hold to blow into the mic
+- Close or open the lid
 
 The Brick's F1 and F2 can also be bound on the Shortcuts page, or picked as the modifier instead of MENU.
 
 Every chord is also in the `[padhotkeys]` section of `dsperate.ini`.
 
-Configs from earlier versions of this pak gain MENU + START on the next launch, and MENU + R1 / L1, MENU + Left / Right and L3's mic blow are turned off unless your config already set them. Their MENU + B screenshot stays on.
+Configs from earlier versions of this pak gain MENU + START on the next launch, and MENU + R1 / L1, MENU + Left / Right and L3's mic blow are turned off unless your config already set them. Every other chord they had stays as it was.
 
 ## Pause menu
 

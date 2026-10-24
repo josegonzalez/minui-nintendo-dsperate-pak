@@ -975,17 +975,44 @@ void test_shortcuts_labels() {
   CHECK(m.binding_label("none") == "NONE");
   CHECK(m.binding_label("") == "NONE");
   CHECK(m.binding_label("mod+misc2") == "MENU+MISC2");
+  // Face buttons by position, named as on a Nintendo-layout pad.
+  CHECK(m.binding_label("a") == "B");
+  CHECK(m.binding_label("b") == "A");
+  CHECK(m.binding_label("x") == "Y");
+  CHECK(m.binding_label("y") == "X");
   h.kv["padhotkeys.modifier"] = "back";
-  CHECK(m.binding_label("mod+y") == "SELECT+Y");
+  CHECK(m.binding_label("mod+y") == "SELECT+X");
   // The Brick's F1 and F2 are SDL's sticks, and go by the device's names.
   m.set_button_labels("leftstick=F1 rightstick=F2 bad =X Y=");
   CHECK(m.binding_label("mod+leftstick") == "SELECT+F1");
   CHECK(m.binding_label("rightstick") == "F2");
   CHECK(m.binding_label("bad") == "BAD");
   h.kv["padhotkeys.modifier"] = "rightstick";
-  CHECK(m.binding_label("mod+a") == "F2+A");
+  CHECK(m.binding_label("mod+a") == "F2+B");
   m.set_button_labels("");
-  CHECK(m.binding_label("mod+a") == "R3+A");
+  CHECK(m.binding_label("mod+a") == "R3+B");
+}
+
+// The Controls page's pad values, which upstream spells with a position pip
+// our font cannot draw, read as the Shortcuts page's do.
+void test_controls_labels() {
+  FakeHost h;
+  h.pad = true;
+  MinUiMenu m(true);
+  m.set_settings_host(&h);
+  CHECK(m.controls_label("\x02 EAST") == "A");
+  CHECK(m.controls_label("\x01 SOUTH") == "B");
+  CHECK(m.controls_label("\x03 WEST") == "Y");
+  CHECK(m.controls_label("\x04 NORTH") == "X");
+  CHECK(m.controls_label("FUNC BTN") == "MENU");
+  CHECK(m.controls_label("MOD+\x02 EAST") == "MENU+A");
+  CHECK(m.controls_label("MOD++LEFTX") == "MENU++LEFTX");
+  CHECK(m.controls_label("MOD+START+SELECT") == "MENU+START+SELECT");
+  CHECK(m.controls_label("LEFT STICK") == "LEFT STICK");
+  CHECK(m.controls_label("NONE") == "NONE");
+  h.kv["padhotkeys.modifier"] = "back";
+  m.set_button_labels("leftstick=F1");
+  CHECK(m.controls_label("MOD+L3") == "SELECT+F1");
 }
 
 // The pause chord and its alternate cannot both be cleared: nothing else
@@ -1413,6 +1440,7 @@ int main() {
   test_shortcuts_need_a_pad();
   test_shortcuts_bind();
   test_shortcuts_labels();
+  test_controls_labels();
   test_shortcuts_keep_a_way_in();
   test_shortcuts_modifier();
   test_shortcuts_defaults();

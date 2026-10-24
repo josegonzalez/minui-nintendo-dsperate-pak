@@ -66,14 +66,16 @@ inline constexpr Modifier kModifiers[] = {
 inline constexpr int kModifierCount = static_cast<int>(sizeof kModifiers / sizeof kModifiers[0]);
 
 // How the page names what a binding holds: SDL's names, as on the device.
-// A trigger is bound as an axis, "+lefttrigger".
+// A trigger is bound as an axis, "+lefttrigger". DSperate reads a, b, x and y
+// as the south, east, west and north buttons, and every supported pad has
+// Nintendo's layout, where those are B, A, Y and X.
 struct ButtonLabel {
   const char* name;
   const char* label;
 };
 
 inline constexpr ButtonLabel kButtonLabels[] = {
-  {"a", "A"}, {"b", "B"}, {"x", "X"}, {"y", "Y"},
+  {"a", "B"}, {"b", "A"}, {"x", "Y"}, {"y", "X"},
   {"back", "SELECT"}, {"guide", "MENU"}, {"start", "START"},
   {"leftstick", "L3"}, {"rightstick", "R3"},
   {"leftshoulder", "L1"}, {"rightshoulder", "R1"},

@@ -855,6 +855,27 @@ std::string MinUiMenu::binding_label(const std::string& v) const {
   return out;
 }
 
+std::string MinUiMenu::controls_label(const std::string& v) const {
+  // Upstream's label for each control the pak names otherwise
+  // (Input::pad_label, src/frontend/sdl/input.cpp).
+  static const ButtonLabel kUpstream[] = {
+    {"a", "\x01 SOUTH"}, {"b", "\x02 EAST"}, {"x", "\x03 WEST"}, {"y", "\x04 NORTH"},
+    {"guide", "FUNC BTN"}, {"leftstick", "L3"}, {"rightstick", "R3"},
+  };
+  std::string out;
+  for (size_t at = 0; at <= v.size();) {
+    const size_t plus = v.find('+', at);
+    std::string part = v.substr(at, plus == std::string::npos ? std::string::npos : plus - at);
+    at = plus == std::string::npos ? v.size() + 1 : plus + 1;
+    if (part == "MOD") part = button_label(modifier());
+    for (const ButtonLabel& b : kUpstream)
+      if (part == b.label) part = button_label(b.name);
+    out += part;
+    if (at <= v.size()) out += "+";
+  }
+  return out;
+}
+
 void MinUiMenu::step_modifier(int dir) {
   const std::vector<std::string> choices = modifier_choices();
   const int n = static_cast<int>(choices.size());
@@ -1310,7 +1331,8 @@ void MinUiMenu::draw_controls(Painter& p, const Metrics& m) const {
     const SettingsHost::Binding b = host_->binding(bind_pad_, i);
     Row r;
     r.label = b.label;
-    r.value = i == sel && listening ? "Press any..." : (b.value.empty() || b.value == "none" ? "--" : b.value);
+    const std::string value = bind_pad_ ? controls_label(b.value) : b.value;
+    r.value = i == sel && listening ? "Press any..." : (value.empty() || value == "none" ? "--" : value);
     rows.push_back(r);
   }
   std::vector<std::string> desc;
