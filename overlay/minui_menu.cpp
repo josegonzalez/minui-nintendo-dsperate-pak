@@ -398,7 +398,7 @@ void MinUiMenu::move_list(int dir) {
   case Page::Root:     wrap(row_, static_cast<int>(root_items().size())); break;
   case Page::Options:  wrap(opt_row_, static_cast<int>(options().size())); break;
   case Page::Settings: wrap(set_row_[set_table_], settings_count(table())); break;
-  case Page::Controls: wrap(bind_row_, host_ ? host_->binding_count(bind_pad_) : 0); reset_armed_ = false; break;
+  case Page::Controls: wrap(bind_row_, host_ ? static_cast<int>(control_rows().size()) : 0); reset_armed_ = false; break;
   case Page::Cheats:   move_cheat_row(dir); break;
   case Page::CheevosAccount: wrap(account_row_, static_cast<int>(account_rows().size())); break;
   case Page::Cheevos: {
@@ -536,11 +536,34 @@ MinUiMenu::Result MinUiMenu::handle_settings(u32 presses) {
   return Result::None;
 }
 
+// The host's rows the Controls page shows. With a pad, the Shortcuts page
+// owns the modifier and its chords, so the pad column leaves them out. The
+// launcher owns the volume, and the pak is always full screen, so neither
+// column offers those hotkeys.
+std::vector<int> MinUiMenu::control_rows() const {
+  static const char* const kLauncherOwns[] = {"volume_up", "volume_down", "mute", "fullscreen"};
+  const std::string section = bind_pad_ ? "padhotkeys." : "hotkeys.";
+  const bool shortcuts = bind_pad_ && host_->has_pad();
+  std::vector<int> out;
+  for (int i = 0, n = host_->binding_count(bind_pad_); i < n; ++i) {
+    const std::string key = host_->binding(bind_pad_, i).key;
+    bool hidden = shortcuts && key == "padhotkeys.modifier";
+    for (const Shortcut& sc : kShortcuts)
+      if (shortcuts && key == section + sc.key) hidden = true;
+    for (const char* name : kLauncherOwns)
+      if (key == section + name || key == section + name + ".alt") hidden = true;
+    if (!hidden) out.push_back(i);
+  }
+  return out;
+}
+
 MinUiMenu::Result MinUiMenu::handle_controls(u32 presses) {
   // A hotkey's second row comes and goes as its first is bound and cleared,
   // so the row under the cursor may have gone.
-  const int n = host_->binding_count(bind_pad_);
+  const std::vector<int> rows = control_rows();
+  const int n = static_cast<int>(rows.size());
   bind_row_ = n > 0 ? std::clamp(bind_row_, 0, n - 1) : 0;
+  const int row = n > 0 ? rows[static_cast<size_t>(bind_row_)] : -1;
   // Repaint when listening stops, even from a capture the device cancelled.
   if (const bool listening = host_->capturing(); listening != listen_shown_) {
     listen_shown_ = listening;
@@ -549,7 +572,7 @@ MinUiMenu::Result MinUiMenu::handle_controls(u32 presses) {
   if (host_->capturing()) {
     const std::string got = host_->take_capture();
     if (!got.empty()) {
-      const SettingsHost::Binding b = host_->binding(bind_pad_, bind_row_);
+      const SettingsHost::Binding b = host_->binding(bind_pad_, row);
       if (!b.key.empty()) host_->bind(b.key, got);
       dirty_ = true;
     }
@@ -565,7 +588,12 @@ MinUiMenu::Result MinUiMenu::handle_controls(u32 presses) {
   if (reset_armed_ && (presses || faces_)) {
     reset_armed_ = false;
     dirty_ = true;
-    if (reset) host_->reset_bindings(bind_pad_);
+    if (reset) {
+      host_->reset_bindings(bind_pad_);
+      // That put upstream's chords back too, which this page no longer
+      // shows: the Shortcuts page's own defaults instead.
+      if (bind_pad_ && host_->has_pad()) restore_shortcuts();
+    }
     return Result::None;
   }
   if (hit(presses, B::BTN_UP))   move_list(-1);
@@ -578,7 +606,7 @@ MinUiMenu::Result MinUiMenu::handle_controls(u32 presses) {
   // A alone opens a capture: Start may be the very control being bound.
   if (hit(presses, B::BTN_A)) host_->begin_capture(bind_pad_);
   if (clear) {
-    const SettingsHost::Binding b = host_->binding(bind_pad_, bind_row_);
+    const SettingsHost::Binding b = host_->binding(bind_pad_, row);
     if (!b.key.empty()) host_->bind(b.key, "none");
   }
   if (reset) { reset_armed_ = true; dirty_ = true; }
@@ -1323,12 +1351,13 @@ void MinUiMenu::draw_settings(Painter& p, const Metrics& m) const {
 }
 
 void MinUiMenu::draw_controls(Painter& p, const Metrics& m) const {
-  const int n = host_->binding_count(bind_pad_);
+  const std::vector<int> shown = control_rows();
+  const int n = static_cast<int>(shown.size());
   const int sel = n > 0 ? std::clamp(bind_row_, 0, n - 1) : -1;
   const bool listening = host_->capturing();
   std::vector<Row> rows;
   for (int i = 0; i < n; ++i) {
-    const SettingsHost::Binding b = host_->binding(bind_pad_, i);
+    const SettingsHost::Binding b = host_->binding(bind_pad_, shown[static_cast<size_t>(i)]);
     Row r;
     r.label = b.label;
     const std::string value = bind_pad_ ? controls_label(b.value) : b.value;

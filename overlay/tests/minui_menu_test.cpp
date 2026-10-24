@@ -40,6 +40,7 @@ namespace gfx = ds::sdl::minui_gfx;
 namespace {
 
 u32 press(B b) { return 1u << b; }
+void draw_everywhere(MinUiMenu& m, const char* what);
 
 struct FakeHost : ds::sdl::SettingsHost {
   std::map<std::string, std::string> kv;
@@ -49,6 +50,7 @@ struct FakeHost : ds::sdl::SettingsHost {
   std::string pending;
   int commits = 0;
   int rows = 4;
+  std::vector<std::string> pad_keys;   // the pad column's keys, when not pad.kN
 
   std::string get(const char* key) const override {
     const auto it = kv.find(key);
@@ -68,7 +70,8 @@ struct FakeHost : ds::sdl::SettingsHost {
   int binding_count(bool) const override { return rows; }
   Binding binding(bool p, int i) const override {
     Binding b;
-    b.key = (p ? "pad.k" : "keys.k") + std::to_string(i);
+    b.key = p && static_cast<size_t>(i) < pad_keys.size() ? pad_keys[static_cast<size_t>(i)]
+                                                          : (p ? "pad.k" : "keys.k") + std::to_string(i);
     b.label = "ROW" + std::to_string(i);
     const auto it = kv.find(b.key);
     b.value = it == kv.end() ? "NONE" : it->second;
@@ -500,7 +503,50 @@ void test_controls_by_position_on_a_pad() {
   m.input(0);
   m.face_presses(1u << 3);
   m.input(0);
-  CHECK(h.writes.back() == "reset");
+  CHECK(std::count(h.writes.begin(), h.writes.end(), "reset") == 1);
+  // Upstream's Defaults put its chords back; the Shortcuts page's follow.
+  CHECK(h.kv["padhotkeys.modifier"] == "guide");
+  CHECK(h.kv["padhotkeys.pip_corner_next"] == "mod+start");
+}
+
+// With a pad, the Shortcuts page owns the modifier and its chords, so the
+// Controls page's pad column leaves them out, and its rows still bind the
+// right keys.
+void test_controls_hides_shortcuts() {
+  FakeHost h;
+  h.pad = true;
+  h.pad_keys = {"pad.a", "padhotkeys.modifier", "padhotkeys.quit", "padhotkeys.pause.alt",
+                "padhotkeys.fast_forward", "padhotkeys.mute", "padhotkeys.fullscreen",
+                "padhotkeys.volume_down.alt", "padhotkeys.lid.alt", "padhotkeys.quit.alt"};
+  h.rows = static_cast<int>(h.pad_keys.size());
+  MinUiMenu m(true);
+  m.set_settings_host(&h);
+  to_options(m, kControls);
+  m.input(press(B::BTN_A));                                          // opens on the pad column
+  m.input(press(B::BTN_DOWN));
+  m.face_presses(1u << 2);                                           // clear
+  m.input(0);
+  CHECK(h.kv["padhotkeys.lid.alt"] == "none");
+  m.input(press(B::BTN_DOWN));
+  m.face_presses(1u << 2);
+  m.input(0);
+  CHECK(h.kv["padhotkeys.quit.alt"] == "none");
+  m.input(press(B::BTN_DOWN));                                       // wraps to the top
+  m.face_presses(1u << 2);
+  m.input(0);
+  CHECK(h.kv["pad.a"] == "none");
+  CHECK(!h.kv.count("padhotkeys.quit"));
+  CHECK(!h.kv.count("padhotkeys.modifier"));
+  CHECK(!h.kv.count("padhotkeys.fast_forward"));
+  CHECK(!h.kv.count("padhotkeys.mute"));
+  CHECK(!h.kv.count("padhotkeys.volume_down.alt"));
+  draw_everywhere(m, "the controls page without shortcuts");
+  // The keyboard column hides nothing.
+  m.input(press(B::BTN_L));
+  m.input(press(B::BTN_DOWN));
+  m.face_presses(1u << 2);
+  m.input(0);
+  CHECK(h.kv["keys.k1"] == "none");
 }
 
 // Only codes are selectable, A toggles, and an exclusive group keeps one on.
@@ -1426,6 +1472,7 @@ int main() {
   test_commit_on_closing();
   test_controls();
   test_controls_by_position_on_a_pad();
+  test_controls_hides_shortcuts();
   test_cheats();
   test_achievements();
   test_text_editor();

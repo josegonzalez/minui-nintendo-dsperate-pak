@@ -110,6 +110,8 @@ public:
   // and compass point ("\x02 EAST"), FUNC BTN and MOD, the way the Shortcuts
   // page spells it: "A", "MENU+B".
   std::string controls_label(const std::string& value) const;
+  // The host's Controls rows the page shows, by the host's index.
+  std::vector<int> control_rows() const;
 
   // A pill at the top of the game naming what a hotkey just changed, held
   // for kNoticeHoldMs and faded over kNoticeFadeMs. `now_ms` is wall time

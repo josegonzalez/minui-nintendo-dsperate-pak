@@ -316,7 +316,7 @@ shortcut_table() {
 }
 
 @test "the shortcut table reads as one entry per line" {
-    [ "$(shortcut_table | wc -l)" -eq 17 ]
+    [ "$(shortcut_table | wc -l)" -eq 18 ]
     shortcut_table | grep -q '^pause.alt mod$'
     shortcut_table | grep -q '^pip_corner_next mod+start$'
 }

@@ -63,13 +63,12 @@ struct Host final : ds::sdl::SettingsHost {
   const std::vector<std::pair<const char*, const char*>> kBinds = {
     {"A", "\x02 EAST"}, {"B", "\x01 SOUTH"}, {"X", "\x04 NORTH"}, {"Y", "\x03 WEST"}, {"L", "L1"}, {"R", "R1"},
     {"START", "START"}, {"SELECT", "SELECT"}, {"UP", "UP"}, {"DOWN", "DOWN"}, {"LEFT", "LEFT"},
-    {"RIGHT", "RIGHT"}, {"QUIT", "NONE"}, {"PAUSE", "NONE"},
-    {"PAUSE (2)", "MOD"}, {"FAST_FORWARD", "R2"}, {"SCREEN_SWAP", "MOD+L2"},
+    {"RIGHT", "RIGHT"},
   };
   // The shipped profiles' [padhotkeys], for the Shortcuts page.
   const std::map<std::string, std::string> kHot = {
     {"padhotkeys.quit", "none"}, {"padhotkeys.pause", "none"}, {"padhotkeys.pause.alt", "mod"},
-    {"padhotkeys.fast_forward_toggle", "none"}, {"padhotkeys.layout_next", "none"},
+    {"padhotkeys.fast_forward", "+righttrigger"}, {"padhotkeys.fast_forward_toggle", "none"}, {"padhotkeys.layout_next", "none"},
     {"padhotkeys.layout_prev", "none"}, {"padhotkeys.screen_swap", "mod++lefttrigger"},
     {"padhotkeys.screenshot", "none"}, {"padhotkeys.fps", "none"}, {"padhotkeys.game_switcher", "mod+back"},
     {"padhotkeys.mic", "none"}, {"padhotkeys.lid", "none"},

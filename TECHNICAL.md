@@ -272,7 +272,9 @@ Every change goes through `SettingsHost::bind`, as the Controls page's do: it la
 
 The modifier steps through MENU, SELECT, START, L3, R3 and SDL's `misc1` and `paddle1-4` with left, right or A, but only those `MINUI_PAD_BUTTONS` names, so it never offers a button the pad mapping does not have. SELECT and START are DS buttons as well; as the modifier upstream withholds them from the game while held and passes a lone press on as a tap, unless something is bound to the tap, as `pause.alt` is. The page says so.
 
-The page will not clear both `pause` and `pause.alt`, since nothing else opens the menu that binds them again. Y restores the modifier and every key from the profile the config was seeded from (`MINUI_PROFILE_INI`), after a second press. X and Y go by position on a pad, as on the Controls page. The Controls page's own Defaults stays upstream's: it resets the `[pad]` rows too, and `bind()` cannot take the profiles' values for those back (it refuses `pad.stylus_axis = right`, wanting a captured axis).
+The page will not clear both `pause` and `pause.alt`, since nothing else opens the menu that binds them again. Y restores the modifier and every key from the profile the config was seeded from (`MINUI_PROFILE_INI`), after a second press. X and Y go by position on a pad, as on the Controls page. The Controls page's own Defaults stays upstream's for the `[pad]` rows, since `bind()` cannot take the profiles' values for those back (it refuses `pad.stylus_axis = right`, wanting a captured axis); the chords it also resets are then put back from the profile, as Y here does.
+
+With a pad, the Controls page's pad column leaves out the modifier and every key the Shortcuts page binds, held fast forward included, so each chord is changed in one place. Both columns also leave out `volume_up`, `volume_down`, `mute` and `fullscreen`: the launcher owns the volume, and the pak always runs full screen.
 
 ### The layout notice
 
