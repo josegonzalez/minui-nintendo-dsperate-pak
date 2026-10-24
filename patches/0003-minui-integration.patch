@@ -48,8 +48,10 @@ did. "rom" keys states on the ROM filename instead, which is what a launcher
 keys its own files on, and stops two hacks of one game sharing slots.
 
 The screenshot rename is not configurable: <GAMECODE>-<timestamp>.png became
-<display name>.<YYYY-MM-DD-HH-MM-SS>.png, which is what minarch writes and so
-what every other system on the card writes.
+<display name>.<YYYY-MM-DD-HH-MM-SS>.png, which is what NextUI's minarch writes
+and so what every other system on the card writes, with the display name
+worked out as NextUI works it out, map.txt alias included. A screenshot also
+puts up "Screenshot saved" unless NextUI's notifyScreenshot is off.
 diff --git a/src/frontend/sdl/CMakeLists.txt b/src/frontend/sdl/CMakeLists.txt
 index 9302772..750c468 100644
 --- a/src/frontend/sdl/CMakeLists.txt
@@ -131,7 +133,7 @@ index 49935b7..868c77d 100644
    // Rebinding, for the Controls page.
    bool has_pad() const { return pad_ != nullptr; }
 diff --git a/src/frontend/sdl/main.cpp b/src/frontend/sdl/main.cpp
-index 7f4e371..5c00fce 100644
+index 7f4e371..1eec865 100644
 --- a/src/frontend/sdl/main.cpp
 +++ b/src/frontend/sdl/main.cpp
 @@ -40,6 +40,8 @@
@@ -143,51 +145,39 @@ index 7f4e371..5c00fce 100644
  #include "loader_cart.h"
  #include "menu.h"
  #include "cpu_gov.h"
-@@ -390,35 +392,67 @@ bool write_png(NDS& nds, const std::string& path, const ds::sdl::Display::Layout
+@@ -390,35 +392,57 @@ bool write_png(NDS& nds, const std::string& path, const ds::sdl::Display::Layout
    return true;
  }
  
 -// <GAMECODE>-<timestamp>.png in paths.screenshots (states dir unless set).
 -void screenshot(NDS& nds, const std::string& dir, const ds::sdl::Display::Layout& layout) {
-+// The screenshot hotkey. The name follows minarch's, which is what every other
-+// system on a MinUI card writes and what its screenshot tooling expects:
-+// <display name>.<YYYY-MM-DD-HH-MM-SS>.png, flat in the screenshots directory
-+// (paths.screenshots; the states directory unless set). The display name is
-+// the ROM's filename with its extension and any trailing (...) or [...] groups
-+// removed, falling back to the game code when there is no ROM.
++// The screenshot hotkey. The name follows NextUI's minarch, which is what
++// every other system on the card writes and what its screenshot tooling
++// expects: <display name>.<YYYY-MM-DD-HH-MM-SS>.png, flat in the screenshots
++// directory (paths.screenshots; the states directory unless set). The display
++// name is NextUI's (MinUiMenu::display_name), falling back to the game code
++// when there is no ROM.
 +std::string display_name_of(NDS& nds, const std::string& rom) {
-+  std::string n = rom.empty() ? std::string() : base_name(rom_stem(rom));
-+  // Trailing bracketed groups, innermost last: "Game (USA) [!]" -> "Game".
-+  for (;;) {
-+    while (!n.empty() && n.back() == ' ') n.pop_back();
-+    if (n.size() < 2) break;
-+    const char close = n.back();
-+    const char open = close == ')' ? '(' : close == ']' ? '[' : '\0';
-+    if (!open) break;
-+    const size_t at = n.find_last_of(open);
-+    if (at == std::string::npos) break;
-+    n.resize(at);
-+  }
-+  while (!n.empty() && n.back() == ' ') n.pop_back();
++  const std::string n = ds::sdl::MinUiMenu::display_name(rom);
 +  if (!n.empty()) return n;
 +  return std::string(nds.cart ? nds.cart->header().game_code : "NONE", 4);
 +}
 +
-+void screenshot(NDS& nds, const std::string& dir, const ds::sdl::Display::Layout& layout, const std::string& rom) {
++bool screenshot(NDS& nds, const std::string& dir, const ds::sdl::Display::Layout& layout, const std::string& rom) {
    ::mkdir(dir.c_str(), 0755);
    char stamp[32];
    const std::time_t now = std::time(nullptr);
 -  std::strftime(stamp, sizeof stamp, "%Y%m%d-%H%M%S", std::localtime(&now));
 -  std::string code(nds.cart ? nds.cart->header().game_code : "NONE", 4);
 -  const std::string path = dir + "/" + code + "-" + stamp + ".png";
+-  if (write_png(nds, path, layout)) std::fprintf(stderr, "screenshot: %s\n", path.c_str());
 +  std::strftime(stamp, sizeof stamp, "%Y-%m-%d-%H-%M-%S", std::localtime(&now));
 +  const std::string path = dir + "/" + display_name_of(nds, rom) + "." + stamp + ".png";
-   if (write_png(nds, path, layout)) std::fprintf(stderr, "screenshot: %s\n", path.c_str());
- }
- 
--std::string state_path(NDS& nds, const std::string& dir, int slot) {
--  const std::string code(nds.cart ? nds.cart->header().game_code : "NONE", 4);
--  return dir + "/" + code + "." + std::to_string(slot) + ".dss";
++  if (!write_png(nds, path, layout)) return false;
++  std::fprintf(stderr, "screenshot: %s\n", path.c_str());
++  return true;
++}
++
 +// What a state file is named after. The game code is upstream's default and
 +// stays so; "rom" keys on the ROM's filename instead, which a launcher wants
 +// because it is what the launcher itself keys everything on, and because two
@@ -198,8 +188,11 @@ index 7f4e371..5c00fce 100644
 +std::string state_key_of(NDS& nds, const std::string& rom) {
 +  if (g_state_key == "rom" && !rom.empty()) return base_name(rom_stem(rom));
 +  return std::string(nds.cart ? nds.cart->header().game_code : "NONE", 4);
-+}
-+
+ }
+ 
+-std::string state_path(NDS& nds, const std::string& dir, int slot) {
+-  const std::string code(nds.cart ? nds.cart->header().game_code : "NONE", 4);
+-  return dir + "/" + code + "." + std::to_string(slot) + ".dss";
 +std::string state_path(NDS& nds, const std::string& dir, int slot, const std::string& rom) {
 +  return dir + "/" + state_key_of(nds, rom) + "." + std::to_string(slot) + ".dss";
  }
@@ -224,7 +217,7 @@ index 7f4e371..5c00fce 100644
    FILE* f = std::fopen(path.c_str(), "rb");
    if (!f) return {};
    std::fclose(f);
-@@ -1801,6 +1835,13 @@ sdl_ready:
+@@ -1801,6 +1825,13 @@ sdl_ready:
      if (!nds.rom_zip_entry.empty()) VLOG("zip: %s\n", nds.rom_zip_entry.c_str());
    }
    Session session;
@@ -238,7 +231,7 @@ index 7f4e371..5c00fce 100644
    session.open(nds, cfg, rom_path, save_arg);
  
    cfg.set("video.aa", aa_on(cfg.str("video.aa", "false")) ? "true" : "false");
-@@ -1838,7 +1879,7 @@ sdl_ready:
+@@ -1838,7 +1869,7 @@ sdl_ready:
    // replay/recording, since the log runs inputs from boot.
    const std::string autoload = load_state || log.reading() || log.writing()
                                     ? std::string()
@@ -247,7 +240,7 @@ index 7f4e371..5c00fce 100644
    if (load_state || !autoload.empty()) {
      const char* start_state = load_state ? load_state : autoload.c_str();
      bool got_layout = false;
-@@ -1853,6 +1894,8 @@ sdl_ready:
+@@ -1853,6 +1884,8 @@ sdl_ready:
      }
    }
    startup_off_rt.reset();
@@ -256,7 +249,7 @@ index 7f4e371..5c00fce 100644
    ds::sdl::Lid lid;
    if (!replay) lid.open();
    std::vector<s16> mic, mic_raw, mic_queue;
-@@ -2006,7 +2049,11 @@ sdl_ready:
+@@ -2006,7 +2039,11 @@ sdl_ready:
    constexpr int PIP_FADE_STEP = 24;                          // ~10 frames rest to opaque
    int pip_alpha = static_cast<int>(layout.pip_alpha * 255.0 + 0.5), pip_hold = 0;
    // The pause menu (menu.h) and the two screen copies it is composited into.
@@ -269,7 +262,7 @@ index 7f4e371..5c00fce 100644
    menu.set_cheats(&nds.cheats.codes, &session.cheats.groups);
    session.load_enabled(nds);
    // DSI NAND LINKS: a .dspr.nds shortcut file per DSiWare title on
-@@ -2057,7 +2104,7 @@ sdl_ready:
+@@ -2057,7 +2094,7 @@ sdl_ready:
    // picture, taken from fb_ after one deliberately unscaled frame.
    bool shot_pending = false;
    // Slot kAutoSlot is the auto state, which the slot page lists for deletion.
@@ -278,7 +271,7 @@ index 7f4e371..5c00fce 100644
    auto refresh_slots = [&] { for (int i = 0; i <= Menu::kAutoSlot; ++i) {
      FILE* f = std::fopen(slot_path(i).c_str(), "rb");
      menu.set_slot_used(i, f != nullptr);
-@@ -2109,6 +2156,21 @@ sdl_ready:
+@@ -2109,6 +2146,21 @@ sdl_ready:
    // Whether fb_ holds the last run frame's picture (true after an unscaled
    // frame; false after a scanline-tier frame written straight to the panel).
    bool fb_current = false;
@@ -300,7 +293,7 @@ index 7f4e371..5c00fce 100644
    auto autosave_now = [&] {
      // net_live: quitting would otherwise leave a state resuming a dead conversation.
      if (!autosave || save_readonly || log.writing() || net_live) return;
-@@ -2119,12 +2181,12 @@ sdl_ready:
+@@ -2119,12 +2171,12 @@ sdl_ready:
        nds.run_frame();
        fb_current = true;
      }
@@ -315,7 +308,7 @@ index 7f4e371..5c00fce 100644
      if (write_png(nds, png, display.current_layout())) std::fprintf(stderr, "state: thumbnail %s\n", png.c_str());
    };
    Disp::Layout loaded_layout = layout; bool got_layout = false;   // from `layout`: a state carries no pip_alpha, the config's stays
-@@ -2627,6 +2689,7 @@ sdl_ready:
+@@ -2627,6 +2679,7 @@ sdl_ready:
    Toast toast_now;
    int toast_left = 0;
    ds::sdl::Rect toast_last{};          // what the canvas has to take back out
@@ -323,7 +316,7 @@ index 7f4e371..5c00fce 100644
    constexpr int TOAST_FRAMES = 240;    // four seconds: long enough to read two lines
    constexpr int TOAST_INFO_FRAMES = 150;
    // DSi state loaded without an SD card. Twice a toast's time.
-@@ -3174,7 +3237,7 @@ sdl_ready:
+@@ -3174,7 +3227,7 @@ sdl_ready:
      // After the battery save, so the state's SRAM wins; never during replay/recording.
      if (const std::string a = log.reading() || log.writing()
                                    ? std::string()
@@ -332,7 +325,7 @@ index 7f4e371..5c00fce 100644
          !a.empty() && load_state_file(nds, a, loaded_layout, got_layout)) {
        std::fprintf(stderr, "state: autoloaded %s\n", a.c_str());
        apply_loaded_layout();
-@@ -3207,9 +3270,10 @@ sdl_ready:
+@@ -3207,9 +3260,10 @@ sdl_ready:
        case Menu::Result::Save:
          if (net_live) std::fprintf(stderr, "state: not during a network session\n");
          else if (save_readonly) std::fprintf(stderr, "state: not during a replay\n");
@@ -344,7 +337,7 @@ index 7f4e371..5c00fce 100644
          }
          refresh_slots();
          break;
-@@ -3218,10 +3282,11 @@ sdl_ready:
+@@ -3218,10 +3272,11 @@ sdl_ready:
          if (save_readonly) { std::fprintf(stderr, "state: not during a replay\n"); break; }
          if (log.writing()) { std::fprintf(stderr, "state: not while recording\n"); break; }
          // A load leaves the menu too: the player wants to see where they landed.
@@ -357,7 +350,7 @@ index 7f4e371..5c00fce 100644
            menu.set_open(false);
            set_paused(false);
            audio.clear();
-@@ -3237,6 +3302,7 @@ sdl_ready:
+@@ -3237,6 +3292,7 @@ sdl_ready:
          if (std::remove(path.c_str()) != 0) std::fprintf(stderr, "state: cannot delete %s: %s\n", path.c_str(), std::strerror(errno));
          else std::fprintf(stderr, "state: deleted %s\n", path.c_str());
          if (menu.doomed_slot() == Menu::kAutoSlot) { std::string png = path; png.replace(png.size() - 3, 3, "png"); std::remove(png.c_str()); }
@@ -365,7 +358,7 @@ index 7f4e371..5c00fce 100644
          if (menu.doomed_slot() == menu.slot()) g_state_refused.clear();
          refresh_slots();
          break;
-@@ -3285,6 +3351,35 @@ sdl_ready:
+@@ -3285,6 +3341,35 @@ sdl_ready:
      SDL_Event e;
      input.set_menu_open(menu.open());
      while (SDL_PollEvent(&e)) input.handle(e, display, dual_window ? &display2 : nullptr);
@@ -401,7 +394,7 @@ index 7f4e371..5c00fce 100644
      for (ds::sdl::Action a : input.take_actions()) {
        using A = ds::sdl::Action;
        switch (a) {
-@@ -3316,6 +3411,7 @@ sdl_ready:
+@@ -3316,6 +3401,7 @@ sdl_ready:
          apply_visibility();
          menu_dirty = true;
          VLOG("layout: %s\n", Disp::mode_name(l.mode));
@@ -409,7 +402,7 @@ index 7f4e371..5c00fce 100644
          if (!session.game_ini.empty()) ds::sdl::Config::store(session.game_ini, "video.layout", Disp::mode_name(l.mode));
          break;
        }
-@@ -3325,6 +3421,7 @@ sdl_ready:
+@@ -3325,6 +3411,7 @@ sdl_ready:
            display.set_only_screen(vs.layout.primary);
            display2.set_only_screen(1 - vs.layout.primary);
            menu_dirty = true;
@@ -417,7 +410,7 @@ index 7f4e371..5c00fce 100644
            if (!session.game_ini.empty()) ds::sdl::Config::store(session.game_ini, "video.screen", vs.layout.primary ? "bottom" : "top");
            break;
          }
-@@ -3333,6 +3430,7 @@ sdl_ready:
+@@ -3333,6 +3420,7 @@ sdl_ready:
          display.set_layout(l);
          apply_visibility();
          menu_dirty = true;
@@ -425,7 +418,7 @@ index 7f4e371..5c00fce 100644
          if (!session.game_ini.empty()) ds::sdl::Config::store(session.game_ini, "video.screen", l.primary ? "bottom" : "top");
          break;
        }
-@@ -3342,10 +3440,30 @@ sdl_ready:
+@@ -3342,10 +3430,34 @@ sdl_ready:
          l.corner = static_cast<Disp::Corner>((static_cast<int>(l.corner) + 1) % static_cast<int>(Disp::Corner::Count));
          display.set_layout(l);
          menu_dirty = true;
@@ -453,11 +446,15 @@ index 7f4e371..5c00fce 100644
 +        minui.write_game_switcher();
 +        input.request_quit();
 +        break;
-+      case A::Screenshot: if (paused) screenshot(nds, session.shots_dir, display.current_layout(), session.rom_path); else shot_pending = true; break;
++      case A::Screenshot:
++        if (!paused) { shot_pending = true; break; }
++        if (screenshot(nds, session.shots_dir, display.current_layout(), session.rom_path) && menu.notify_screenshots())
++          menu.notify("Screenshot saved", SDL_GetTicks());
++        break;
        case A::Lid: input.set_lid(!input.lid()); VLOG("lid: %s\n", input.lid() ? "closed" : "open"); if (input.lid()) flush_save(); break;
        case A::SlotNext: state_slot = (state_slot + 1) % 10; show_slot(std::to_string(state_slot)); VLOG("state slot %d\n", state_slot); break;
        case A::SlotPrev: state_slot = (state_slot + 9) % 10; show_slot(std::to_string(state_slot)); VLOG("state slot %d\n", state_slot); break;
-@@ -3353,8 +3471,9 @@ sdl_ready:
+@@ -3353,8 +3465,9 @@ sdl_ready:
          // A state freezes the machine mid-conversation, but nothing restores a network session.
          if (net_live) { std::fprintf(stderr, "state: not during a network session\n"); break; }
          if (save_readonly) { std::fprintf(stderr, "state: not during a replay\n"); break; }
@@ -468,7 +465,7 @@ index 7f4e371..5c00fce 100644
            show_slot("STATE " + std::to_string(state_slot) + " SAVED");
          }
          break;
-@@ -3362,12 +3481,13 @@ sdl_ready:
+@@ -3362,12 +3475,13 @@ sdl_ready:
          if (net_live) { std::fprintf(stderr, "state: not during a network session\n"); break; }
          if (save_readonly) { std::fprintf(stderr, "state: not during a replay\n"); break; }
          if (log.writing()) { std::fprintf(stderr, "state: not while recording\n"); break; }
@@ -483,7 +480,7 @@ index 7f4e371..5c00fce 100644
            show_slot("STATE " + std::to_string(state_slot) + " LOADED");
            sd_note_toast();
          }
-@@ -3711,6 +3831,9 @@ sdl_ready:
+@@ -3711,6 +3825,9 @@ sdl_ready:
        const bool fps_field = !fps_text.empty();
        const u32 flash_alpha = flash_left > 0 ? static_cast<u32>(255 * flash_left / FLASH_FRAMES) : 0;
        if (flash_left > 0) --flash_left;
@@ -493,7 +490,7 @@ index 7f4e371..5c00fce 100644
        // Overlays follow Layout::primary to stay where the player's
        // looking. Dual window has no primary, so top screen.
        const Disp::Layout& osd_l = display.current_layout();
-@@ -3729,6 +3852,12 @@ sdl_ready:
+@@ -3729,6 +3846,12 @@ sdl_ready:
            const auto note = [&](const ds::sdl::Rect& r) { display.note_canvas_draw(r.x, r.y, r.w, r.h); };
            if (slot_osd) note(draw_label(c, slot_text.c_str(), false));
            if (fps_field) note(draw_label(c, fps_text.c_str(), true));
@@ -506,7 +503,7 @@ index 7f4e371..5c00fce 100644
            if (menu_over_live) { menu.draw(c); display.note_canvas_draw_all(); }
            // Toast's area must be handed back even the frame it stops drawing.
            if (toast_on()) {
-@@ -3757,6 +3886,7 @@ sdl_ready:
+@@ -3757,6 +3880,7 @@ sdl_ready:
            const ds::sdl::Canvas c = tgt_canvas(target[osd_screen]);
            if (slot_osd) draw_label(c, slot_text.c_str(), false);
            if (fps_field) draw_label(c, fps_text.c_str(), true);
@@ -514,7 +511,7 @@ index 7f4e371..5c00fce 100644
            if (menu_over_live) menu.draw(c);
            if (toast_on()) draw_toast_on(c);
            if (flash_alpha) for (int i = 0; i < 2; ++i) if (target[i].px) draw_flash(tgt_canvas(target[i]), flash_alpha);
-@@ -3773,13 +3903,14 @@ sdl_ready:
+@@ -3773,13 +3897,14 @@ sdl_ready:
          // Overlay layer where there is one: labels go on the panel's own
          // pixels. Flash stays below: on the overlay it'd upload every frame.
          ds::sdl::Display::CanvasView ocv;
@@ -530,7 +527,7 @@ index 7f4e371..5c00fce 100644
            if (toast_on()) { draw_toast_on(c); display.note_canvas_draw_all(); }
            if (menu_over_live) { menu.draw(c); display.note_canvas_draw_all(); }
          }
-@@ -3789,6 +3920,7 @@ sdl_ready:
+@@ -3789,6 +3914,7 @@ sdl_ready:
            const ds::sdl::Canvas od = ds_canvas(osd_fb.data());
            if (slot_osd) draw_label(od, slot_text.c_str(), false);
            if (fps_field) draw_label(od, fps_text.c_str(), true);
@@ -538,16 +535,17 @@ index 7f4e371..5c00fce 100644
            if (toast_on()) draw_toast_on(od);
            if (menu_over_live) menu.draw(od);
            fb[osd_screen] = osd_fb.data();
-@@ -3827,7 +3959,7 @@ sdl_ready:
+@@ -3827,7 +3953,8 @@ sdl_ready:
      audio.push(nds, fast || limiter_off);
      if (shot_pending && present) {
        shot_pending = false;
 -      screenshot(nds, session.shots_dir, display.current_layout());
-+      screenshot(nds, session.shots_dir, display.current_layout(), session.rom_path);
++      if (screenshot(nds, session.shots_dir, display.current_layout(), session.rom_path) && menu.notify_screenshots())
++        menu.notify("Screenshot saved", SDL_GetTicks());
        flash_left = FLASH_FRAMES;   // from the next frame: this one is already on the panel and in the file
      }
      if (pause_pending && present) {
-@@ -4063,6 +4195,7 @@ sdl_ready:
+@@ -4063,6 +4190,7 @@ sdl_ready:
    }
    log.close();
    ds::prof::report();

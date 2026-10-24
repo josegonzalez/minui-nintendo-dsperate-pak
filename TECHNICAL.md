@@ -176,7 +176,7 @@ from the last parenthesised group of the Roms folder.
 | Game switcher | `.minui/game_switcher.txt` | existence only |
 | Resume request | `/tmp/resume_slot.txt` | read and consumed by launch.sh |
 | Readable state format | `<pak>/dsperate.state-version` | one ASCII int, written at build time |
-| Screenshot | `/Screenshots/<display name>.<YYYY-MM-DD-HH-MM-SS>.png` | PNG |
+| Screenshot | `/Screenshots/<display name>.<YYYY-MM-DD-HH-MM-SS>.png` | PNG; the name as NextUI's minarch works it out (below) |
 
 Five things here are silent when wrong, so they have tests:
 
@@ -251,6 +251,7 @@ Every tier hands the menu a different canvas, and the drawing is straight-alpha 
 | `MINUI_COLOR1..7` | NextUI's `color1..7` as written (`0xRRGGBBAA`); unset ones keep NextUI's defaults |
 | `MINUI_PROFILE_INI` | The profile the config was seeded from, which Shortcuts > Defaults restores |
 | `MINUI_PAD_BUTTONS` | The control names in the exported pad mapping, which the Shortcuts page's modifier is picked from. Unset with no mapping |
+| `MINUI_NOTIFY_SCREENSHOT` | `0` when NextUI's `notifyScreenshot=0`, else `1`; stock MinUI has no such setting |
 
 NextUI's look puts the title in an accent pill (color2) and the selection in color1 with color5 text, with no text shadow. MinUI's is a black title pill, a white selection with black text, and a black shadow under every other row. The `font=` reading follows NextUI's `config.c`, where `0` and `1` are the numbers older releases wrote.
 
@@ -258,7 +259,7 @@ Text is drawn with the launcher's own font through `stb_truetype.h`, and thumbna
 
 A bare MENU tap opens the menu because upstream already fires a hotkey bound to `mod` alone when the modifier is released with nothing else pressed (`Bind::ModAlone`), and the profiles bind `pause.alt = mod`; MENU+Y is still `pause`, and the `Pause` action already closes an open menu.
 
-The profiles are seeded once, so `dsp_migrate_config` brings an older config up to date through `dsp_add_padhotkey`, which adds a key under `[padhotkeys]` once and leaves alone any value the player set there, `none` included. It adds `pause.alt = mod`; `pip_corner_next = mod+start`, unless some key already holds `mod+start` or there is no `pause` line, since upstream's default `pause` is `mod+start`; and `none` for `save_state`, `load_state`, `slot_next` and `slot_prev`, which now ship off.
+The profiles are seeded once, so `dsp_migrate_config` brings an older config up to date through `dsp_add_padhotkey`, which adds a key under `[padhotkeys]` once and leaves alone any value the player set there, `none` included. It adds `pause.alt = mod`; `pip_corner_next = mod+start`, unless some key already holds `mod+start` or there is no `pause` line, since upstream's default `pause` is `mod+start`; and `none` for `save_state`, `load_state`, `slot_next` and `slot_prev`, which now ship off, and for `mic`. The profiles never set `mic` before, so upstream's default, a held L3, was live, and on the stick profiles L3 is also `stylus_button.alt`: one press tapped the pen and blew into the mic. `screenshot` ships off now too, but an older config keeps the MENU+B its profile gave it.
 
 ### The Shortcuts page
 
@@ -266,13 +267,15 @@ Options > Shortcuts turns each of the pak's modifier chords on or off, and picks
 
 Every change goes through `SettingsHost::bind`, as the Controls page's do: it lands in the global config or the game's, as Save Changes says, and the input is reconfigured at once. A chord bound some other way on the Controls page reads CUSTOM, and A replaces it with the table's.
 
-The modifier steps through MENU, SELECT, START, L3, R3 and SDL's `misc1` and `paddle1-4`, but only those `MINUI_PAD_BUTTONS` names, so it never offers a button the pad mapping does not have. SELECT and START are DS buttons as well; as the modifier upstream withholds them from the game while held and passes a lone press on as a tap, unless something is bound to the tap, as `pause.alt` is. The page says so. A chord on the modifier itself (`game_switcher` with SELECT, `pip_corner_next` with START) reads N/A.
+The modifier steps through MENU, SELECT, START, L3, R3 and SDL's `misc1` and `paddle1-4`, but only those `MINUI_PAD_BUTTONS` names, so it never offers a button the pad mapping does not have. SELECT and START are DS buttons as well; as the modifier upstream withholds them from the game while held and passes a lone press on as a tap, unless something is bound to the tap, as `pause.alt` is. The page says so. A chord on the modifier itself (`game_switcher` with SELECT, `pip_corner_next` with START) reads N/A, and so does one on a control the mapping does not name: the mic blow (MENU+L3) and the lid (MENU+R3) on a device without sticks. Every standard button already carries a MENU chord, which is why those two went on the sticks.
 
 The page will not turn off both `pause` and `pause.alt`, since nothing else opens the menu that turns them back on. Defaults restores the modifier and every key from the profile the config was seeded from (`MINUI_PROFILE_INI`), after a second press. The Controls page's own Defaults stays upstream's: it resets the `[pad]` rows too, and `bind()` cannot take the profiles' values for those back (it refuses `pad.stylus_axis = right`, wanting a captured axis).
 
 ### The layout notice
 
 When a hotkey changes the layout, swaps the screens or moves the pip screen, the menu draws the setting's name at the top centre of the game, as `LAYOUT: DOMINANT V`, in its title pill. The label and value come from the same upstream settings tables the Layout page shows. It holds for three seconds and fades out over half a second, timed on `SDL_GetTicks()` rather than frames, so fast forward does not cut it short. The fade is a `Painter` alpha, so it is straight alpha like the rest of the menu and right on every tier; the canvas tiers note its rectangle, and the frame after it ends too, as upstream's toasts do. Upstream's slot label and FPS counter keep the top corners, and its toasts the bottom.
+
+A screenshot puts up `Screenshot saved` in the same pill, as NextUI's minarch notifies, and only when NextUI's `notifyScreenshot` is not `0`. Its name follows NextUI's minarch too (`getDisplayName`, then `getAlias`): the alias for the ROM's filename in the `map.txt` beside it, tab separated, when there is one; otherwise the filename less any one-to-four-letter extensions (`.p8.png` both), less everything from the first `(` and then the first `[`, unless that leaves nothing. The pause menu's title pill shows the same name, as NextUI's does. The picture itself stays the DS screens at their own size in the current layout, which `write_png` draws; NextUI captures the whole panel instead.
 
 ### The game switcher's save
 

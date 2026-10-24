@@ -7,6 +7,8 @@
 // is off holds "none". Which are on out of the box is the device profile's
 // business (config/dsperate/*.ini), not this table's: the table only says
 // what "on" means, so a shortcut a profile ships off can still be turned on.
+// A chord on a control the pad mapping does not name (L3 and R3 on a device
+// without sticks) cannot be pressed there, and the page says so.
 //
 // One entry per line, in this exact shape: tests/makefile.bats reads the
 // chords out of this file to check every profile against them.
@@ -34,6 +36,8 @@ inline constexpr Shortcut kShortcuts[] = {
   {"fps", "FPS counter", "mod+x", "X", "none"},
   {"fast_forward_toggle", "Fast forward", "mod++righttrigger", "R2", "none"},
   {"game_switcher", "Game switcher", "mod+back", "SELECT", "none"},
+  {"mic", "Blow into the mic (hold)", "mod+leftstick", "L3", "leftstick"},
+  {"lid", "Close the lid", "mod+rightstick", "R3", "none"},
   {"save_state", "Save state", "mod+rightshoulder", "R1", "mod+rightshoulder"},
   {"load_state", "Load state", "mod+leftshoulder", "L1", "mod+leftshoulder"},
   {"slot_next", "Next state slot", "mod+dpright", "RIGHT", "mod+dpright"},

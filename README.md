@@ -67,7 +67,6 @@ MENU acts as the modifier for every chord. Pressed and released on its own, it o
 - MENU + A: Quit
 - MENU + Y: Pause menu
 - MENU + Up / Down: Cycle screen layout
-- MENU + B: Screenshot
 - MENU + X: Toggle the FPS counter
 - MENU + L2: Swap which screen is the large one
 - MENU + START: Move the small screen of the pip layout to the next corner
@@ -79,9 +78,18 @@ MENU acts as the modifier for every chord. Pressed and released on its own, it o
 
 Changing the layout, swapping the screens or moving the small screen shows the new setting's name at the top of the screen for a few seconds. The choice is remembered for that game.
 
-The pause menu's Options > Shortcuts page turns each MENU chord on or off, and can move all of them from MENU to another button. Save state (MENU + R1), load state (MENU + L1) and picking a state slot (MENU + Left / Right) are there too, and are off by default. Every chord is also in the `[padhotkeys]` section of `dsperate.ini`.
+The pause menu's Options > Shortcuts page turns each MENU chord on or off, and can move all of them from MENU to another button. These are there too, and are off by default:
 
-Configs from earlier versions of this pak gain MENU + START on the next launch, and MENU + R1 / L1 and MENU + Left / Right are turned off unless your config already set them.
+- MENU + R1: Save state
+- MENU + L1: Load state
+- MENU + Left / Right: Pick the state slot
+- MENU + B: Screenshot
+- MENU + L3 (devices with sticks): Hold to blow into the mic
+- MENU + R3 (devices with sticks): Close or open the lid
+
+Every chord is also in the `[padhotkeys]` section of `dsperate.ini`.
+
+Configs from earlier versions of this pak gain MENU + START on the next launch, and MENU + R1 / L1, MENU + Left / Right and L3's mic blow are turned off unless your config already set them. Their MENU + B screenshot stays on.
 
 ## Pause menu
 
@@ -101,7 +109,7 @@ The MENU tap is `pause.alt = mod` in the `[padhotkeys]` section of the config. C
 
 - Game saves are stored in `/Saves/DSP/`.
 - Save states are stored in `/.userdata/shared/DSP-dsperate/`, named after the rom.
-- Screenshots are written to `/Screenshots/`, named the way every other system on the card names them.
+- Screenshots are written to `/Screenshots/`, named the way NextUI names them, including the game's name from a `map.txt` beside the rom. Each one shows "Screenshot saved" unless NextUI's screenshot notification is turned off.
 - Cheats are read from `/Cheats/DSP/usrcheat.dat` if present.
 
 Saving or loading a state also leaves the launcher a thumbnail, so the game shows up in the game switcher and offers RESUME when you next open it.

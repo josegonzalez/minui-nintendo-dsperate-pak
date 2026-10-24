@@ -69,7 +69,8 @@ struct Host final : ds::sdl::SettingsHost {
     {"padhotkeys.quit", "mod+a"}, {"padhotkeys.pause", "mod+y"}, {"padhotkeys.pause.alt", "mod"},
     {"padhotkeys.fast_forward_toggle", "mod++righttrigger"}, {"padhotkeys.layout_next", "mod+dpup"},
     {"padhotkeys.layout_prev", "mod+dpdown"}, {"padhotkeys.screen_swap", "mod++lefttrigger"},
-    {"padhotkeys.screenshot", "mod+b"}, {"padhotkeys.fps", "mod+x"}, {"padhotkeys.game_switcher", "mod+back"},
+    {"padhotkeys.screenshot", "none"}, {"padhotkeys.fps", "mod+x"}, {"padhotkeys.game_switcher", "mod+back"},
+    {"padhotkeys.mic", "none"}, {"padhotkeys.lid", "none"},
     {"padhotkeys.pip_corner_next", "mod+start"}, {"padhotkeys.save_state", "none"},
     {"padhotkeys.load_state", "none"}, {"padhotkeys.slot_next", "none"}, {"padhotkeys.slot_prev", "none"},
   };

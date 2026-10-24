@@ -496,13 +496,13 @@ fake_nextui() {
     done
 }
 
-@test "an older config gains MENU+START and loses the state chords, once" {
+@test "an older config gains MENU+START and loses the state and mic chords, once" {
     printf '[padhotkeys]\npause = mod+y\npause.alt = mod\n\n[cheevos]\nenabled = true\n' >"$DSP_CONFIG"
     dsp_migrate_config
     dsp_migrate_config
     section="$(sed -n '/^\[padhotkeys\]/,/^\[cheevos\]/p' "$DSP_CONFIG")"
     [ "$(echo "$section" | grep -c '^pip_corner_next = mod+start$')" -eq 1 ]
-    for key in save_state load_state slot_next slot_prev; do
+    for key in save_state load_state slot_next slot_prev mic; do
         [ "$(echo "$section" | grep -c "^$key = none$")" -eq 1 ]
     done
 }
@@ -574,4 +574,31 @@ fake_nextui() {
     touch "$DSP_USERDATA_DIR/probe.txt"
     run dsp_probe_buttons
     [ "$status" -eq 0 ]
+}
+
+@test "NextUI's screenshot notice setting reaches the pause menu" {
+    mkdir -p "$SDCARD_PATH/.system/res"
+    touch "$SDCARD_PATH/.system/res/font1.ttf"
+    printf 'font=1\r\n' >"$SHARED_USERDATA_PATH/minuisettings.txt"
+    dsp_detect_style
+    [ "$MINUI_NOTIFY_SCREENSHOT" = "1" ]
+    printf 'font=1\r\nnotifyScreenshot=0\r\n' >"$SHARED_USERDATA_PATH/minuisettings.txt"
+    dsp_detect_style
+    [ "$MINUI_NOTIFY_SCREENSHOT" = "0" ]
+    printf 'notifyScreenshot=0\nnotifyScreenshot=1\n' >"$SHARED_USERDATA_PATH/minuisettings.txt"
+    dsp_detect_style
+    [ "$MINUI_NOTIFY_SCREENSHOT" = "1" ]
+}
+
+@test "stock MinUI always gets the screenshot notice" {
+    printf 'notifyScreenshot=0\n' >"$SHARED_USERDATA_PATH/minuisettings.txt"
+    dsp_detect_style
+    [ "$MINUI_STYLE" = "minui" ]
+    [ "$MINUI_NOTIFY_SCREENSHOT" = "1" ]
+}
+
+@test "an older config keeps its screenshot chord" {
+    printf '[padhotkeys]\npause = mod+y\nscreenshot = mod+b\n' >"$DSP_CONFIG"
+    dsp_migrate_config
+    grep -q '^screenshot = mod+b$' "$DSP_CONFIG"
 }

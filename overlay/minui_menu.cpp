@@ -128,6 +128,46 @@ MinUiMenu::MinUiMenu(bool active) : active_(active), font_(std::make_unique<Font
   set_theme(Theme::from_env());
   if (const char* p = std::getenv("MINUI_PROFILE_INI")) profile_ = p;
   pad_buttons_ = words(std::getenv("MINUI_PAD_BUTTONS"));
+  // NextUI's own switch for its "Screenshot saved" notice; on unless it is off.
+  const char* n = std::getenv("MINUI_NOTIFY_SCREENSHOT");
+  notify_screenshot_ = !(n && std::strcmp(n, "0") == 0);
+}
+
+// NextUI's name for a game (getDisplayName, then getAlias in minarch): the
+// ROM's map.txt alias when it has one, else the filename with its short
+// extensions and everything from the first ( or [ dropped. Empty for no ROM.
+std::string MinUiMenu::display_name(const std::string& rom_path) {
+  if (rom_path.empty()) return {};
+  const size_t slash = rom_path.find_last_of('/');
+  const std::string file = slash == std::string::npos ? rom_path : rom_path.substr(slash + 1);
+  const std::string dir = slash == std::string::npos ? std::string(".") : rom_path.substr(0, slash);
+  std::ifstream map(dir + "/map.txt");
+  for (std::string line; map && std::getline(map, line);) {
+    while (!line.empty() && (line.back() == '\r' || line.back() == '\n')) line.pop_back();
+    const size_t tab = line.find('\t');
+    if (tab != std::string::npos && line.compare(0, tab, file) == 0 && tab == file.size()) return line.substr(tab + 1);
+  }
+  std::string name = file;
+  // ".nds", and ".p8.png" in two goes: a dot and one to four letters.
+  for (size_t dot; (dot = name.find_last_of('.')) != std::string::npos;) {
+    const size_t len = name.size() - dot;
+    if (len > 2 && len <= 5) name.resize(dot);
+    else break;
+  }
+  const std::string whole = name;
+  // From the last ( to the end, again and again, then the same for [; a
+  // group that starts the name stops it, as getDisplayName's loop does.
+  for (const char open : {'(', '['}) {
+    bool stop = false;
+    for (size_t at; !stop && (at = name.find_last_of(open)) != std::string::npos;) {
+      if (at == 0) stop = true;
+      else name.resize(at);
+    }
+    if (stop) break;
+  }
+  if (name.empty()) name = whole;
+  while (name.size() > 1 && std::isspace(static_cast<unsigned char>(name.back()))) name.pop_back();
+  return name;
 }
 
 void MinUiMenu::set_theme(const Theme& theme) {
@@ -799,9 +839,13 @@ std::string MinUiMenu::shortcut_value(int i) const {
 
 MinUiMenu::ShortcutState MinUiMenu::shortcut_state(int i) const {
   const Shortcut& s = kShortcuts[i];
-  // A chord on the modifier itself cannot be pressed: SELECT+SELECT.
+  // A chord on the modifier itself cannot be pressed: SELECT+SELECT. Nor can
+  // one on a control the pad mapping does not name, when it names any.
   const std::string button = chord_button(s.chord);
   if (!button.empty() && button == modifier()) return ShortcutState::Unavailable;
+  if (!button.empty() && !pad_buttons_.empty() &&
+      std::find(pad_buttons_.begin(), pad_buttons_.end(), button) == pad_buttons_.end())
+    return ShortcutState::Unavailable;
   const std::string v = shortcut_value(i);
   if (v == "none") return ShortcutState::Off;
   return v == s.chord ? ShortcutState::On : ShortcutState::Custom;
@@ -1296,7 +1340,9 @@ void MinUiMenu::draw_shortcuts(Painter& p, const Metrics& m) const {
   } else {
     const int i = sel - 1;
     const ShortcutState st = shortcut_state(i);
-    if (st == ShortcutState::Unavailable) desc.push_back(mod + " is the modifier, so this cannot be held with it");
+    if (st == ShortcutState::Unavailable)
+      desc.push_back(chord_button(kShortcuts[i].chord) == modifier() ? mod + " is the modifier, so this cannot be held with it"
+                                                                     : std::string(kShortcuts[i].button) + " is not on this device");
     else if (st == ShortcutState::Custom) desc.push_back("Bound on the Controls page. A sets " + chord_label(i));
     else desc.push_back("A Toggle   X Defaults");
   }

@@ -1052,6 +1052,63 @@ void test_shortcuts_defaults() {
   for (int i = 0; i < sc::kShortcutCount; ++i) CHECK(pad_hot(g, sc::kShortcuts[i].key) == sc::kShortcuts[i].chord);
 }
 
+// L3 and R3 on a pad mapping without sticks cannot be pressed: N/A, and A
+// leaves them alone. With no mapping known, nothing is ruled out.
+void test_shortcuts_need_the_button() {
+  FakeHost h;
+  h.pad = true;
+  h.kv["padhotkeys.mic"] = "none";
+  MinUiMenu m(true);
+  m.set_settings_host(&h);
+  m.set_pad_buttons({"a", "b", "x", "y", "back", "guide", "start", "dpup", "dpdown"});
+  to_shortcut(m, "mic");
+  m.input(press(B::BTN_A));
+  CHECK(pad_hot(h, "mic") == "none");
+  draw_everywhere(m, "the shortcuts page, a button the pad lacks");
+  m.set_pad_buttons({"a", "b", "guide", "leftstick", "rightstick"});
+  m.input(press(B::BTN_A));
+  CHECK(pad_hot(h, "mic") == "mod+leftstick");
+  m.set_pad_buttons({});
+  to_shortcut(m, "lid");
+  m.input(press(B::BTN_A));
+  CHECK(pad_hot(h, "lid") == "mod+rightstick");
+}
+
+// ---------------------------------------------------------------------------
+// The screenshot's name: NextUI's getDisplayName, then its map.txt alias
+
+void test_display_name() {
+  using M = MinUiMenu;
+  CHECK(M::display_name("") == "");
+  CHECK(M::display_name("/Roms/DS (DSP)/Mario Kart DS (USA, Australia) (En,Fr,De,Es,It).nds") == "Mario Kart DS");
+  // Everything from the first ( on, not just the trailing groups.
+  CHECK(M::display_name("/r/Game (USA) Extra.nds") == "Game");
+  CHECK(M::display_name("/r/Game [!] (USA).nds") == "Game");
+  // Stacked short extensions go; a long "extension" is part of the name.
+  CHECK(M::display_name("/r/Beckon the Hellspawn.p8.png") == "Beckon the Hellspawn");
+  CHECK(M::display_name("/r/Dr. Mario.nds") == "Dr. Mario");
+  // A name that is all tags keeps itself rather than vanishing.
+  CHECK(M::display_name("/r/(Prototype).nds") == "(Prototype)");
+  CHECK(M::display_name("/r/Title  .nds") == "Title");
+  // map.txt beside the ROM: tab separated, exact filename, CRLF tolerated.
+  const std::string dir = scratch("Roms");
+  ::mkdir(dir.c_str(), 0755);
+  write_text(dir + "/map.txt", "Other.nds\tNot This\r\nPokemon - Black (USA).nds\tPokemon Black\r\nPokemon - Black (USA).nd\tNo\r\n");
+  CHECK(M::display_name(dir + "/Pokemon - Black (USA).nds") == "Pokemon Black");
+  CHECK(M::display_name(dir + "/Pokemon - White (USA).nds") == "Pokemon - White");
+}
+
+void test_screenshot_notice_switch() {
+  ::unsetenv("MINUI_NOTIFY_SCREENSHOT");
+  CHECK(MinUiMenu(true).notify_screenshots());
+  ::setenv("MINUI_NOTIFY_SCREENSHOT", "0", 1);
+  CHECK(!MinUiMenu(true).notify_screenshots());
+  ::setenv("MINUI_NOTIFY_SCREENSHOT", "1", 1);
+  CHECK(MinUiMenu(true).notify_screenshots());
+  ::unsetenv("MINUI_NOTIFY_SCREENSHOT");
+  CHECK(!MinUiMenu(false).notify_screenshots());                     // no launcher, no notice
+}
+
 // ---------------------------------------------------------------------------
 // The notice
 
@@ -1302,6 +1359,9 @@ int main() {
   test_shortcuts_keep_a_way_in();
   test_shortcuts_modifier();
   test_shortcuts_defaults();
+  test_shortcuts_need_the_button();
+  test_display_name();
+  test_screenshot_notice_switch();
   test_notice_timing();
   test_notice_fades();
   test_notice_bounds();

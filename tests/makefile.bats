@@ -308,7 +308,7 @@ shortcut_table() {
 }
 
 @test "the shortcut table reads as one entry per line" {
-    [ "$(shortcut_table | wc -l)" -eq 15 ]
+    [ "$(shortcut_table | wc -l)" -eq 17 ]
     shortcut_table | grep -q '^pause.alt mod$'
     shortcut_table | grep -q '^pip_corner_next mod+start$'
 }
@@ -330,10 +330,10 @@ shortcut_table() {
     done
 }
 
-@test "the state and slot chords ship off, and MENU+START moves the pip screen" {
+@test "the state, slot, screenshot, mic and lid chords ship off, and MENU+START moves the pip screen" {
     for f in "$REPO_ROOT"/config/dsperate/*.ini; do
         section="$(sed -n '/^\[padhotkeys\]/,/^\[/p' "$f")"
-        for key in save_state load_state slot_next slot_prev; do
+        for key in save_state load_state slot_next slot_prev screenshot mic lid; do
             echo "$section" | grep -q "^$key = none$" || return 1
         done
         echo "$section" | grep -q '^pip_corner_next = mod+start$' || return 1

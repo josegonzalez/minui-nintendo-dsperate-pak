@@ -225,7 +225,9 @@ dsp_add_padhotkey() {
 #   - MENU+START moves the pip screen, unless MENU+START is already taken,
 #     which a config with no pause line counts as, upstream's pause being
 #     mod+start;
-#   - the state and slot chords are off, as they ship now.
+#   - the state and slot chords are off, as they ship now;
+#   - the mic blow is off, rather than upstream's default of L3, which the
+#     stick profiles also give the pen's tap.
 # Anything the player set for these keys themselves is left alone.
 dsp_migrate_config() {
     [ -f "$DSP_CONFIG" ] || return 0
@@ -234,7 +236,7 @@ dsp_migrate_config() {
     if dsp_padhotkey_value pause >/dev/null && ! dsp_padhotkey_taken mod+start; then
         dsp_add_padhotkey pip_corner_next mod+start
     fi
-    for _key in save_state load_state slot_next slot_prev; do
+    for _key in save_state load_state slot_next slot_prev mic; do
         dsp_add_padhotkey "$_key" none
     done
 }
@@ -248,6 +250,9 @@ dsp_detect_style() {
     _settings="$SHARED_USERDATA_PATH/minuisettings.txt"
     MINUI_STYLE="minui"
     MINUI_FONT=""
+    # NextUI's "Screenshot saved" notice switch, on unless it says 0. Stock
+    # MinUI has no such setting, so the notice always shows there.
+    MINUI_NOTIFY_SCREENSHOT=1
 
     if [ -f "$_settings" ] && [ -f "$_res/font1.ttf" ]; then
         MINUI_STYLE="nextui"
@@ -261,6 +266,10 @@ dsp_detect_style() {
         [ -f "$_res/$_font" ] || _font="font1.ttf"
         MINUI_FONT="$_res/$_font"
 
+        if [ "$(sed -n 's/^notifyScreenshot=//p' "$_settings" | tail -n 1 | tr -d '\r')" = "0" ]; then
+            MINUI_NOTIFY_SCREENSHOT=0
+        fi
+
         for _i in 1 2 3 4 5 6 7; do
             _colour="$(sed -n "s/^color$_i=//p" "$_settings" | tail -n 1 | tr -d '\r')"
             if [ -n "$_colour" ]; then
@@ -272,7 +281,7 @@ dsp_detect_style() {
         MINUI_FONT="$_res/BPreplayBold-unhinted.otf"
     fi
 
-    export MINUI_STYLE MINUI_FONT
+    export MINUI_STYLE MINUI_FONT MINUI_NOTIFY_SCREENSHOT
     echo "pause menu: $MINUI_STYLE look, font ${MINUI_FONT:-built-in}"
 }
 

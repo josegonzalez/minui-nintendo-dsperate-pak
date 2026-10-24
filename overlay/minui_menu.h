@@ -111,6 +111,14 @@ public:
   // "LAYOUT: DOMINANT V": the row's label and the value's own label, from
   // the settings tables the Layout page shows, or the raw value.
   static std::string setting_notice(const char* key, const std::string& value);
+  // Whether a screenshot should say so: NextUI's notifyScreenshot, passed on
+  // by launch.sh as MINUI_NOTIFY_SCREENSHOT. On unless it is "0".
+  bool notify_screenshots() const { return active_ && notify_screenshot_; }
+  void set_notify_screenshots(bool on) { notify_screenshot_ = on; }
+  // The game's name as NextUI shows it and names its screenshots: the alias
+  // map.txt beside the ROM gives it, else the filename without its
+  // extensions or anything from the first ( or [ on. Empty for no ROM.
+  static std::string display_name(const std::string& rom_path);
   // Where the player is, for tests.
   Page page() const { return stack_[depth_ - 1]; }
 
@@ -263,6 +271,7 @@ private:
 
   std::string toast_;          // the notice, and when it went up
   u32  toast_ms_ = 0;
+  bool notify_screenshot_ = true;
 
   static constexpr u32 kRepeatDelayMs = 400, kRepeatRateMs = 55;
   int  repeat_dir_ = 0;
