@@ -99,6 +99,9 @@ public:
   void set_profile(const std::string& path) { profile_ = path; }
   void set_pad_buttons(const std::vector<std::string>& names) { pad_buttons_ = names; }
   bool active() const { return active_; }
+  // A [padhotkeys] value as the Shortcuts page shows it: "MENU+R1", "L2",
+  // "MENU" for the modifier's tap, NONE. Needs the settings host.
+  std::string binding_label(const std::string& value) const;
 
   // A pill at the top of the game naming what a hotkey just changed, held
   // for kNoticeHoldMs and faded over kNoticeFadeMs. `now_ms` is wall time
@@ -130,8 +133,6 @@ private:
     bool enabled = true;
   };
   enum class Opt : u8 { Emulation, VisualFx, Layout, Controls, DsOptions, Cheats, Achievements, Slots, SaveChanges, Reset, Shortcuts };
-  // A Shortcuts row's state, from what [padhotkeys] holds.
-  enum class ShortcutState : u8 { On, Off, Custom, Unavailable };
   enum class RootItem : u8 { Continue, Save, Load, Options, Quit };
   enum class AccountRow : u8 { SignIn, SignOut, List, Toasts, Screenshot, Encore };
   enum class EditDest : u8 { Setting, CheevosUser, CheevosPassword };
@@ -163,12 +164,10 @@ private:
   // minui_shortcuts::kShortcuts.
   std::string modifier() const;
   std::vector<std::string> modifier_choices() const;
-  std::string modifier_label(const std::string& name) const;
+  std::string button_label(const std::string& name) const;
   std::string shortcut_value(int i) const;
-  ShortcutState shortcut_state(int i) const;
-  std::string chord_label(int i) const;
   void step_modifier(int dir);
-  void toggle_shortcut(int i);
+  void clear_shortcut(int i);
   void restore_shortcuts();
   void step_setting(int dir);
   void build_lines();

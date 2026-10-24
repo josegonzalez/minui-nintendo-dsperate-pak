@@ -78,7 +78,7 @@ MENU acts as the modifier for every chord. Pressed and released on its own, it o
 
 Changing the layout, swapping the screens or moving the small screen shows the new setting's name at the top of the screen for a few seconds. The choice is remembered for that game.
 
-The pause menu's Options > Shortcuts page turns each MENU chord on or off, and can move all of them from MENU to another button. These are there too, and are off by default:
+The pause menu's Options > Shortcuts page changes any of these the way NextUI's does: press A on a row, then press a button. Holding MENU while pressing it makes a MENU + button chord. X clears the row, and Y twice puts back the defaults for your device. The page can also move every chord from MENU to another button. These are there too, and are off by default:
 
 - MENU + R1: Save state
 - MENU + L1: Load state

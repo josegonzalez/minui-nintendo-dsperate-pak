@@ -917,38 +917,69 @@ void test_shortcuts_need_a_pad() {
   CHECK(m.page() == Page::Shortcuts);
 }
 
-// A toggles between the chord and none; a chord the player bound elsewhere
-// is turned into the table's.
-void test_shortcuts_toggle() {
+// NextUI's binding: A listens, the next button is bound, alone or with the
+// modifier held, and the cursor moves on. X clears and moves on too.
+void test_shortcuts_bind() {
   FakeHost h;
   h.pad = true;
   MinUiMenu m(true);
   m.set_settings_host(&h);
-  // Absent keys run with upstream's default: on for the state chords.
   to_shortcut(m, "save_state");
   m.input(press(B::BTN_A));
-  CHECK(pad_hot(h, "save_state") == "none");
-  m.input(press(B::BTN_A));
-  CHECK(pad_hot(h, "save_state") == "mod+rightshoulder");
-  m.input(press(B::BTN_LEFT));                                       // left and right toggle too
-  CHECK(pad_hot(h, "save_state") == "none");
-  m.input(press(B::BTN_RIGHT));
-  CHECK(pad_hot(h, "save_state") == "mod+rightshoulder");
-  // Off upstream, so the first press turns it on.
-  to_shortcut(m, "pip_corner_next");
-  m.input(press(B::BTN_A));
-  CHECK(pad_hot(h, "pip_corner_next") == "mod+start");
-  // Custom becomes the table's chord.
-  h.kv["padhotkeys.screenshot"] = "mod+leftstick";
+  CHECK(h.capturing_);
+  draw_everywhere(m, "the shortcuts page, listening");
+  m.input(0);                                                        // nothing pressed yet
+  CHECK(h.capturing_);
+  h.pending = "mod+x";
+  m.input(0);
+  CHECK(pad_hot(h, "save_state") == "mod+x");
+  CHECK(!h.capturing_);
+  m.input(press(B::BTN_A));                                          // on to Load state
+  h.pending = "+righttrigger";
+  m.input(0);
+  CHECK(pad_hot(h, "load_state") == "+righttrigger");
+  // Clear is the north button by position, and moves on as well.
   to_shortcut(m, "screenshot");
-  m.input(press(B::BTN_A));
-  CHECK(pad_hot(h, "screenshot") == "mod+b");
+  m.face_presses(1u << 3);
+  m.input(0);
+  CHECK(pad_hot(h, "screenshot") == "none");
+  m.face_presses(1u << 3);
+  m.input(0);
+  CHECK(pad_hot(h, "fps") == "none");
+  // Left and right leave a shortcut alone; they are the modifier row's.
+  const size_t writes = h.writes.size();
+  to_shortcut(m, "quit");
+  m.input(press(B::BTN_LEFT));
+  m.input(press(B::BTN_RIGHT));
+  CHECK(h.writes.size() == writes);
   draw_everywhere(m, "the shortcuts page");
   for (int i = 0; i < 20; ++i) m.input(press(B::BTN_DOWN));
   draw_everywhere(m, "the shortcuts page, scrolled");
 }
 
-// The tap and the pause chord cannot both go: nothing else opens the menu.
+// How a binding reads: the modifier by its label, a trigger's axis as the
+// trigger, anything unknown in capitals.
+void test_shortcuts_labels() {
+  FakeHost h;
+  h.pad = true;
+  MinUiMenu m(true);
+  m.set_settings_host(&h);
+  CHECK(m.binding_label("mod+rightshoulder") == "MENU+R1");
+  CHECK(m.binding_label("mod++lefttrigger") == "MENU+L2");
+  CHECK(m.binding_label("+righttrigger") == "R2");
+  CHECK(m.binding_label("mod+-leftx") == "MENU+LS LEFT");
+  CHECK(m.binding_label("mod") == "MENU");
+  CHECK(m.binding_label("mod+start+back") == "MENU+START+SELECT");
+  CHECK(m.binding_label("dpup") == "UP");
+  CHECK(m.binding_label("none") == "NONE");
+  CHECK(m.binding_label("") == "NONE");
+  CHECK(m.binding_label("mod+misc2") == "MENU+MISC2");
+  h.kv["padhotkeys.modifier"] = "back";
+  CHECK(m.binding_label("mod+y") == "SELECT+Y");
+}
+
+// The pause chord and its alternate cannot both be cleared: nothing else
+// opens the menu.
 void test_shortcuts_keep_a_way_in() {
   FakeHost h;
   h.pad = true;
@@ -957,22 +988,26 @@ void test_shortcuts_keep_a_way_in() {
   MinUiMenu m(true);
   m.set_settings_host(&h);
   to_shortcut(m, "pause.alt");
-  m.input(press(B::BTN_A));
-  CHECK(pad_hot(h, "pause.alt") == "none");                         // the chord is still on
+  m.face_presses(1u << 3);
+  m.input(0);
+  CHECK(pad_hot(h, "pause.alt") == "none");                         // the chord is still bound
   to_shortcut(m, "pause");
-  m.input(press(B::BTN_A));
+  m.face_presses(1u << 3);
+  m.input(0);
   CHECK(pad_hot(h, "pause") == "mod+y");                            // refused
   draw_everywhere(m, "the shortcuts page, refusing");
   to_shortcut(m, "pause.alt");
   m.input(press(B::BTN_A));
+  h.pending = "mod";
+  m.input(0);
   CHECK(pad_hot(h, "pause.alt") == "mod");
   to_shortcut(m, "pause");
-  m.input(press(B::BTN_A));
+  m.face_presses(1u << 3);
+  m.input(0);
   CHECK(pad_hot(h, "pause") == "none");                             // the tap is back, so it may go
 }
 
-// The modifier steps through what the pad mapping names, and a chord on the
-// modifier itself cannot be had.
+// The modifier steps through what the pad mapping names.
 void test_shortcuts_modifier() {
   FakeHost h;
   h.pad = true;
@@ -983,19 +1018,15 @@ void test_shortcuts_modifier() {
   m.input(press(B::BTN_RIGHT));
   CHECK(pad_hot(h, "modifier") == "back");
   draw_everywhere(m, "the shortcuts page, SELECT as the modifier");
-  // SELECT+SELECT: the game switcher's chord is out of reach and stays put.
-  h.kv["padhotkeys.game_switcher"] = "mod+back";
-  const size_t writes = h.writes.size();
-  to_shortcut(m, "game_switcher");
-  m.input(press(B::BTN_A));
-  CHECK(h.writes.size() == writes);
-  to_shortcut(m, nullptr);
   m.input(press(B::BTN_RIGHT));
   CHECK(pad_hot(h, "modifier") == "start");
   m.input(press(B::BTN_RIGHT));                                      // wraps: L3 and the rest are not mapped
   CHECK(pad_hot(h, "modifier") == "guide");
   m.input(press(B::BTN_LEFT));
   CHECK(pad_hot(h, "modifier") == "start");
+  m.input(press(B::BTN_A));                                          // A steps it too, never listens
+  CHECK(pad_hot(h, "modifier") == "guide");
+  CHECK(!h.capturing_);
   // With no mapping known, the modifier stays where it is.
   FakeHost bare;
   bare.pad = true;
@@ -1007,7 +1038,7 @@ void test_shortcuts_modifier() {
   CHECK(bare.writes.empty());
 }
 
-// X twice restores the device's profile; without one, every chord.
+// Y twice restores the device's profile; without one, every chord.
 void test_shortcuts_defaults() {
   const std::string profile = scratch("no-sticks.ini");
   write_text(profile, "[pad]\nstylus_dpad = +righttrigger\n\n[padhotkeys]\n# a comment\nquit = mod+a\n"
@@ -1020,22 +1051,24 @@ void test_shortcuts_defaults() {
   m.set_settings_host(&h);
   m.set_profile(profile);
   to_shortcut(m, "quit");
-  m.face_presses(1u << 3);                                           // north, armed
+  m.face_presses(1u << 2);                                           // west, armed
   m.input(0);
   CHECK(pad_hot(h, "save_state") == "mod+x");
-  m.face_presses(1u << 3);
+  draw_everywhere(m, "the shortcuts page, Defaults armed");
+  m.face_presses(1u << 2);
   m.input(0);
   CHECK(pad_hot(h, "modifier") == "guide");
   CHECK(pad_hot(h, "save_state") == "none");
   CHECK(pad_hot(h, "slot_next") == "none");
   CHECK(pad_hot(h, "quit") == "mod+a");                              // [cheevos] is not [padhotkeys]
   CHECK(pad_hot(h, "load_state") == "mod+leftshoulder");             // the profile leaves it out
-  // Any other press backs out of an armed Defaults.
+  // Any other press backs out of an armed Defaults, and does only that.
   h.kv["padhotkeys.quit"] = "none";
+  m.face_presses(1u << 2);
+  m.input(0);
   m.face_presses(1u << 3);
   m.input(0);
-  m.input(press(B::BTN_DOWN));
-  m.face_presses(1u << 3);
+  m.face_presses(1u << 2);
   m.input(0);
   CHECK(pad_hot(h, "quit") == "none");
   // No profile: every chord.
@@ -1045,33 +1078,11 @@ void test_shortcuts_defaults() {
   n.set_settings_host(&g);
   n.set_profile(scratch("missing.ini"));
   to_shortcut(n, nullptr);
-  n.face_presses(1u << 3);
+  n.face_presses(1u << 2);
   n.input(0);
-  n.face_presses(1u << 3);
+  n.face_presses(1u << 2);
   n.input(0);
   for (int i = 0; i < sc::kShortcutCount; ++i) CHECK(pad_hot(g, sc::kShortcuts[i].key) == sc::kShortcuts[i].chord);
-}
-
-// L3 and R3 on a pad mapping without sticks cannot be pressed: N/A, and A
-// leaves them alone. With no mapping known, nothing is ruled out.
-void test_shortcuts_need_the_button() {
-  FakeHost h;
-  h.pad = true;
-  h.kv["padhotkeys.mic"] = "none";
-  MinUiMenu m(true);
-  m.set_settings_host(&h);
-  m.set_pad_buttons({"a", "b", "x", "y", "back", "guide", "start", "dpup", "dpdown"});
-  to_shortcut(m, "mic");
-  m.input(press(B::BTN_A));
-  CHECK(pad_hot(h, "mic") == "none");
-  draw_everywhere(m, "the shortcuts page, a button the pad lacks");
-  m.set_pad_buttons({"a", "b", "guide", "leftstick", "rightstick"});
-  m.input(press(B::BTN_A));
-  CHECK(pad_hot(h, "mic") == "mod+leftstick");
-  m.set_pad_buttons({});
-  to_shortcut(m, "lid");
-  m.input(press(B::BTN_A));
-  CHECK(pad_hot(h, "lid") == "mod+rightstick");
 }
 
 // ---------------------------------------------------------------------------
@@ -1355,11 +1366,11 @@ int main() {
   test_battery_pill();
   test_preview_shows_the_thumbnail();
   test_shortcuts_need_a_pad();
-  test_shortcuts_toggle();
+  test_shortcuts_bind();
+  test_shortcuts_labels();
   test_shortcuts_keep_a_way_in();
   test_shortcuts_modifier();
   test_shortcuts_defaults();
-  test_shortcuts_need_the_button();
   test_display_name();
   test_screenshot_notice_switch();
   test_notice_timing();

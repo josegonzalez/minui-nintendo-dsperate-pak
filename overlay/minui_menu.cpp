@@ -97,16 +97,6 @@ std::vector<std::string> words(const char* s) {
   return out;
 }
 
-// The control a chord holds with the modifier: "mod++lefttrigger" is
-// "lefttrigger". Empty for the modifier's tap, which holds nothing else.
-std::string chord_button(const char* chord) {
-  std::string s = chord;
-  if (s.compare(0, 4, "mod+") != 0) return {};
-  s.erase(0, 4);
-  if (!s.empty() && (s[0] == '+' || s[0] == '-')) s.erase(0, 1);
-  return s;
-}
-
 int shortcut_index(const char* key) {
   for (int i = 0; i < kShortcutCount; ++i)
     if (std::strcmp(kShortcuts[i].key, key) == 0) return i;
@@ -799,7 +789,7 @@ MinUiMenu::Result MinUiMenu::handle_slots(u32 presses) {
   return Result::Delete;
 }
 
-// The pak's modifier chords, on and off, and the modifier they hang on. Every
+// The pak's modifier chords and the modifier they hang on. Every
 // change goes through SettingsHost::bind, as the Controls page's do, so it
 // lands where Save Changes says and the input is reconfigured at once.
 std::string MinUiMenu::modifier() const {
@@ -822,9 +812,9 @@ std::vector<std::string> MinUiMenu::modifier_choices() const {
   return out;
 }
 
-std::string MinUiMenu::modifier_label(const std::string& name) const {
-  for (const Modifier& m : kModifiers)
-    if (name == m.name) return m.label;
+std::string MinUiMenu::button_label(const std::string& name) const {
+  for (const ButtonLabel& b : kButtonLabels)
+    if (name == b.name) return b.label;
   std::string up = name;
   for (char& c : up) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
   return up;
@@ -837,23 +827,22 @@ std::string MinUiMenu::shortcut_value(int i) const {
   return v.empty() ? s.upstream : v;
 }
 
-MinUiMenu::ShortcutState MinUiMenu::shortcut_state(int i) const {
-  const Shortcut& s = kShortcuts[i];
-  // A chord on the modifier itself cannot be pressed: SELECT+SELECT. Nor can
-  // one on a control the pad mapping does not name, when it names any.
-  const std::string button = chord_button(s.chord);
-  if (!button.empty() && button == modifier()) return ShortcutState::Unavailable;
-  if (!button.empty() && !pad_buttons_.empty() &&
-      std::find(pad_buttons_.begin(), pad_buttons_.end(), button) == pad_buttons_.end())
-    return ShortcutState::Unavailable;
-  const std::string v = shortcut_value(i);
-  if (v == "none") return ShortcutState::Off;
-  return v == s.chord ? ShortcutState::On : ShortcutState::Custom;
-}
-
-std::string MinUiMenu::chord_label(int i) const {
-  const std::string mod = modifier_label(modifier());
-  return *kShortcuts[i].button ? mod + "+" + kShortcuts[i].button : mod;
+// A binding as the page shows it, NextUI's way: "MENU+R1", "L2", "MENU" for
+// the modifier's tap, or NONE. "mod++lefttrigger" is the modifier and the
+// trigger's axis, whose own sign follows the separator.
+std::string MinUiMenu::binding_label(const std::string& v) const {
+  if (v.empty() || v == "none") return "NONE";
+  std::string out, sign;
+  for (size_t at = 0; at <= v.size();) {
+    const size_t plus = v.find('+', at);
+    const std::string part = v.substr(at, plus == std::string::npos ? std::string::npos : plus - at);
+    at = plus == std::string::npos ? v.size() + 1 : plus + 1;
+    if (part.empty()) { sign = "+"; continue; }
+    if (!out.empty()) out += "+";
+    out += part == "mod" ? button_label(modifier()) : button_label(sign + part);
+    sign.clear();
+  }
+  return out;
 }
 
 void MinUiMenu::step_modifier(int dir) {
@@ -864,24 +853,21 @@ void MinUiMenu::step_modifier(int dir) {
   if (next != modifier()) host_->bind("padhotkeys.modifier", next);
 }
 
-void MinUiMenu::toggle_shortcut(int i) {
-  const ShortcutState st = shortcut_state(i);
-  if (st == ShortcutState::Unavailable) return;
-  const Shortcut& s = kShortcuts[i];
-  const std::string key = std::string("padhotkeys.") + s.key;
-  if (st != ShortcutState::On) { host_->bind(key, s.chord); return; }
-  // The menu is the only way to turn these back on, so the last way into it
-  // stays: the tap and the chord cannot both be off.
-  const int pause = shortcut_index("pause"), tap = shortcut_index("pause.alt");
-  if (i == pause || i == tap) {
-    const ShortcutState other = shortcut_state(i == pause ? tap : pause);
-    if (other == ShortcutState::Off || other == ShortcutState::Unavailable) { short_refused_ = true; return; }
+// X: none, and on to the next row as NextUI does. The menu is the only way
+// to bind these again, so the last way into it stays: the pause chord and
+// its alternate cannot both be none.
+void MinUiMenu::clear_shortcut(int i) {
+  const int pause = shortcut_index("pause"), alt = shortcut_index("pause.alt");
+  if ((i == pause || i == alt) && shortcut_value(i == pause ? alt : pause) == "none") {
+    short_refused_ = true;
+    return;
   }
-  host_->bind(key, "none");
+  host_->bind(std::string("padhotkeys.") + kShortcuts[i].key, "none");
+  move_list(+1);
 }
 
 // The device's own: the profile launch.sh seeded the config from. A key the
-// profile leaves out, or no profile at all, is the chord.
+// profile leaves out, or no profile at all, is the table's chord.
 void MinUiMenu::restore_shortcuts() {
   const std::map<std::string, std::string> shipped = read_section(profile_, "padhotkeys");
   const auto it = shipped.find("modifier");
@@ -895,9 +881,28 @@ void MinUiMenu::restore_shortcuts() {
 MinUiMenu::Result MinUiMenu::handle_shortcuts(u32 presses) {
   const int n = kShortcutCount + 1;
   short_row_ = std::clamp(short_row_, 0, n - 1);
-  // Defaults is the north button by position, as on the Controls page, so
-  // rebinding DS X cannot move it.
-  const bool reset = host_->has_pad() ? (faces_ >> 3) & 1 : hit(presses, B::BTN_X);
+  // Repaint when listening stops, even from a capture the device cancelled.
+  if (const bool listening = host_->capturing(); listening != listen_shown_) {
+    listen_shown_ = listening;
+    dirty_ = true;
+  }
+  // NextUI's binding: the next button, alone or with the modifier held, and
+  // on to the next row. SettingsHost::bind turns the modifier alone into its
+  // tap, "mod".
+  if (host_->capturing()) {
+    const std::string got = host_->take_capture();
+    if (!got.empty() && short_row_ > 0) {
+      host_->bind(std::string("padhotkeys.") + kShortcuts[short_row_ - 1].key, got);
+      move_list(+1);
+      dirty_ = true;
+    }
+    return Result::None;
+  }
+  // Clear and Defaults are the north and west buttons by position, as on the
+  // Controls page, so rebinding DS X and Y cannot move them.
+  const bool pad = host_->has_pad();
+  const bool clear = pad ? (faces_ >> 3) & 1 : hit(presses, B::BTN_X);
+  const bool reset = pad ? (faces_ >> 2) & 1 : hit(presses, B::BTN_Y);
   // Defaults rewrites every row, so it takes a second press, and any other
   // press backs out and does only that.
   if (short_armed_ && (presses || faces_)) {
@@ -910,10 +915,14 @@ MinUiMenu::Result MinUiMenu::handle_shortcuts(u32 presses) {
   if (hit(presses, B::BTN_DOWN)) move_list(+1);
   if (hit(presses, B::BTN_L))    short_row_ = std::max(0, short_row_ - std::max(1, visible_));
   if (hit(presses, B::BTN_R))    short_row_ = std::min(n - 1, short_row_ + std::max(1, visible_));
-  const int dir = hit(presses, B::BTN_LEFT) ? -1 : hit(presses, B::BTN_RIGHT) || confirm(presses) ? 1 : 0;
-  if (dir != 0) {
-    if (short_row_ == 0) step_modifier(dir);
-    else toggle_shortcut(short_row_ - 1);
+  if (short_row_ == 0) {
+    const int dir = hit(presses, B::BTN_LEFT) ? -1 : hit(presses, B::BTN_RIGHT) || confirm(presses) ? 1 : 0;
+    if (dir != 0) step_modifier(dir);
+  } else if (hit(presses, B::BTN_A)) {
+    // A alone opens a capture: Start may be the very button being bound.
+    host_->begin_capture(true);
+  } else if (clear) {
+    clear_shortcut(short_row_ - 1);
   }
   if (reset) short_armed_ = true;
   if (hit(presses, B::BTN_B)) pop();
@@ -1306,48 +1315,41 @@ void MinUiMenu::draw_controls(Painter& p, const Metrics& m) const {
 
 void MinUiMenu::draw_shortcuts(Painter& p, const Metrics& m) const {
   const int tiny = m.u(Metrics::FONT_TINY), w = p.canvas().w - m.u(m.padding * 2);
-  const std::string mod = modifier_label(modifier());
+  const std::string mod = button_label(modifier());
+  const bool listening = host_->capturing();
+  const int sel = std::clamp(short_row_, 0, kShortcutCount);
   std::vector<Row> rows;
   Row head;
   head.label = "Modifier";
   head.value = mod;
   rows.push_back(head);
-  // Wide enough for any value a row can step to, so toggling never resizes the list.
+  // Wide enough for any modifier and the prompt, so stepping and listening
+  // never resize the list.
   int value_w = 0;
-  for (const std::string& c : modifier_choices()) value_w = std::max(value_w, font_->width(tiny, modifier_label(c)));
-  for (const char* v : {"OFF", "CUSTOM", "N/A"}) value_w = std::max(value_w, font_->width(tiny, v));
+  for (const std::string& c : modifier_choices()) value_w = std::max(value_w, font_->width(tiny, button_label(c)));
+  for (const char* v : {"NONE", "Press any..."}) value_w = std::max(value_w, font_->width(tiny, v));
   for (int i = 0; i < kShortcutCount; ++i) {
     Row r;
     r.label = kShortcuts[i].label;
-    switch (shortcut_state(i)) {
-    case ShortcutState::On:          r.value = chord_label(i); break;
-    case ShortcutState::Off:         r.value = "OFF"; break;
-    case ShortcutState::Custom:      r.value = "CUSTOM"; break;
-    case ShortcutState::Unavailable: r.value = "N/A"; r.enabled = false; break;
-    }
-    value_w = std::max(value_w, font_->width(tiny, chord_label(i)));
+    r.value = i + 1 == sel && listening ? "Press any..." : binding_label(shortcut_value(i));
+    value_w = std::max(value_w, font_->width(tiny, r.value));
     rows.push_back(r);
   }
-  const int sel = std::clamp(short_row_, 0, kShortcutCount);
   std::vector<std::string> desc;
-  if (short_armed_) desc.push_back("X again restores this device's shortcuts");
-  else if (short_refused_) desc = wrap(tiny, "The tap or Pause menu must stay on: nothing else opens this menu.", w, 2);
+  if (listening) desc = wrap(tiny, "Press a button, or hold " + mod + " and press one", w, 2);
+  else if (short_armed_) desc.push_back("Y again restores this device's shortcuts");
+  else if (short_refused_) desc = wrap(tiny, "Pause menu or its alternate must stay bound: nothing else opens this menu.", w, 2);
   else if (sel == 0) {
     bool ds = false;
     for (const Modifier& k : kModifiers) if (modifier() == k.name) ds = k.ds_button;
     desc = wrap(tiny, ds ? mod + " is a DS button too: the game only gets it as a tap, and not while a tap opens this menu."
                          : "Held with a second button for every shortcut below.", w, 2);
   } else {
-    const int i = sel - 1;
-    const ShortcutState st = shortcut_state(i);
-    if (st == ShortcutState::Unavailable)
-      desc.push_back(chord_button(kShortcuts[i].chord) == modifier() ? mod + " is the modifier, so this cannot be held with it"
-                                                                     : std::string(kShortcuts[i].button) + " is not on this device");
-    else if (st == ShortcutState::Custom) desc.push_back("Bound on the Controls page. A sets " + chord_label(i));
-    else desc.push_back("A Toggle   X Defaults");
+    desc.push_back("A Set   X Clear   Y Defaults");
   }
   const std::vector<std::string> clash = host_->collisions();
   if (!clash.empty()) desc.push_back(clash[0]);
+  else if (sel > 0 && !listening && !short_armed_ && !short_refused_) desc.push_back("A single button, or " + mod + "+button");
   draw_list(p, m, "Shortcuts", rows, sel, short_top_, desc, value_w);
 }
 
