@@ -98,6 +98,10 @@ public:
   // (MINUI_PROFILE_INI, MINUI_PAD_BUTTONS); tests set them here.
   void set_profile(const std::string& path) { profile_ = path; }
   void set_pad_buttons(const std::vector<std::string>& names) { pad_buttons_ = names; }
+  // The device's own names for buttons it labels differently from SDL, as
+  // "name=LABEL" words: the Brick's "leftstick=F1 rightstick=F2". launch.sh
+  // exports them as MINUI_BUTTON_LABELS.
+  void set_button_labels(const std::string& pairs);
   bool active() const { return active_; }
   // A [padhotkeys] value as the Shortcuts page shows it: "MENU+R1", "L2",
   // "MENU" for the modifier's tap, NONE. Needs the settings host.
@@ -267,6 +271,7 @@ private:
   bool short_refused_ = false; // the last way into the menu was nearly turned off
   std::string profile_;
   std::vector<std::string> pad_buttons_;
+  std::map<std::string, std::string> button_labels_;
 
   std::string toast_;          // the notice, and when it went up
   u32  toast_ms_ = 0;

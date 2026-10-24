@@ -118,6 +118,7 @@ MinUiMenu::MinUiMenu(bool active) : active_(active), font_(std::make_unique<Font
   set_theme(Theme::from_env());
   if (const char* p = std::getenv("MINUI_PROFILE_INI")) profile_ = p;
   pad_buttons_ = words(std::getenv("MINUI_PAD_BUTTONS"));
+  if (const char* l = std::getenv("MINUI_BUTTON_LABELS")) set_button_labels(l);
   // NextUI's own switch for its "Screenshot saved" notice; on unless it is off.
   const char* n = std::getenv("MINUI_NOTIFY_SCREENSHOT");
   notify_screenshot_ = !(n && std::strcmp(n, "0") == 0);
@@ -812,7 +813,16 @@ std::vector<std::string> MinUiMenu::modifier_choices() const {
   return out;
 }
 
+void MinUiMenu::set_button_labels(const std::string& pairs) {
+  button_labels_.clear();
+  for (const std::string& w : words(pairs.c_str())) {
+    const size_t eq = w.find('=');
+    if (eq != std::string::npos && eq > 0 && eq + 1 < w.size()) button_labels_[w.substr(0, eq)] = w.substr(eq + 1);
+  }
+}
+
 std::string MinUiMenu::button_label(const std::string& name) const {
+  if (const auto it = button_labels_.find(name); it != button_labels_.end()) return it->second;
   for (const ButtonLabel& b : kButtonLabels)
     if (name == b.name) return b.label;
   std::string up = name;

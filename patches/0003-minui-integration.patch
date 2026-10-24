@@ -133,7 +133,7 @@ index 49935b7..868c77d 100644
    // Rebinding, for the Controls page.
    bool has_pad() const { return pad_ != nullptr; }
 diff --git a/src/frontend/sdl/main.cpp b/src/frontend/sdl/main.cpp
-index 7f4e371..1eec865 100644
+index 7f4e371..379403d 100644
 --- a/src/frontend/sdl/main.cpp
 +++ b/src/frontend/sdl/main.cpp
 @@ -40,6 +40,8 @@
@@ -358,7 +358,13 @@ index 7f4e371..1eec865 100644
          if (menu.doomed_slot() == menu.slot()) g_state_refused.clear();
          refresh_slots();
          break;
-@@ -3285,6 +3341,35 @@ sdl_ready:
+@@ -3280,11 +3336,41 @@ sdl_ready:
+   // for the ones started lazily.
+   ds::place_current_thread(ds::ThreadRole::Emu);
+   ds::place_foreign_threads();
++  minui.mark("running");
+   while (!input.quit() && !g_signalled && (frame_limit == 0 || frames < static_cast<u64>(frame_limit))) {
+     if (frames == 120) ds::place_foreign_threads();
      SDL_Event e;
      input.set_menu_open(menu.open());
      while (SDL_PollEvent(&e)) input.handle(e, display, dual_window ? &display2 : nullptr);
@@ -394,7 +400,7 @@ index 7f4e371..1eec865 100644
      for (ds::sdl::Action a : input.take_actions()) {
        using A = ds::sdl::Action;
        switch (a) {
-@@ -3316,6 +3401,7 @@ sdl_ready:
+@@ -3316,6 +3402,7 @@ sdl_ready:
          apply_visibility();
          menu_dirty = true;
          VLOG("layout: %s\n", Disp::mode_name(l.mode));
@@ -402,7 +408,7 @@ index 7f4e371..1eec865 100644
          if (!session.game_ini.empty()) ds::sdl::Config::store(session.game_ini, "video.layout", Disp::mode_name(l.mode));
          break;
        }
-@@ -3325,6 +3411,7 @@ sdl_ready:
+@@ -3325,6 +3412,7 @@ sdl_ready:
            display.set_only_screen(vs.layout.primary);
            display2.set_only_screen(1 - vs.layout.primary);
            menu_dirty = true;
@@ -410,7 +416,7 @@ index 7f4e371..1eec865 100644
            if (!session.game_ini.empty()) ds::sdl::Config::store(session.game_ini, "video.screen", vs.layout.primary ? "bottom" : "top");
            break;
          }
-@@ -3333,6 +3420,7 @@ sdl_ready:
+@@ -3333,6 +3421,7 @@ sdl_ready:
          display.set_layout(l);
          apply_visibility();
          menu_dirty = true;
@@ -418,7 +424,7 @@ index 7f4e371..1eec865 100644
          if (!session.game_ini.empty()) ds::sdl::Config::store(session.game_ini, "video.screen", l.primary ? "bottom" : "top");
          break;
        }
-@@ -3342,10 +3430,34 @@ sdl_ready:
+@@ -3342,10 +3431,34 @@ sdl_ready:
          l.corner = static_cast<Disp::Corner>((static_cast<int>(l.corner) + 1) % static_cast<int>(Disp::Corner::Count));
          display.set_layout(l);
          menu_dirty = true;
@@ -454,7 +460,7 @@ index 7f4e371..1eec865 100644
        case A::Lid: input.set_lid(!input.lid()); VLOG("lid: %s\n", input.lid() ? "closed" : "open"); if (input.lid()) flush_save(); break;
        case A::SlotNext: state_slot = (state_slot + 1) % 10; show_slot(std::to_string(state_slot)); VLOG("state slot %d\n", state_slot); break;
        case A::SlotPrev: state_slot = (state_slot + 9) % 10; show_slot(std::to_string(state_slot)); VLOG("state slot %d\n", state_slot); break;
-@@ -3353,8 +3465,9 @@ sdl_ready:
+@@ -3353,8 +3466,9 @@ sdl_ready:
          // A state freezes the machine mid-conversation, but nothing restores a network session.
          if (net_live) { std::fprintf(stderr, "state: not during a network session\n"); break; }
          if (save_readonly) { std::fprintf(stderr, "state: not during a replay\n"); break; }
@@ -465,7 +471,7 @@ index 7f4e371..1eec865 100644
            show_slot("STATE " + std::to_string(state_slot) + " SAVED");
          }
          break;
-@@ -3362,12 +3475,13 @@ sdl_ready:
+@@ -3362,12 +3476,13 @@ sdl_ready:
          if (net_live) { std::fprintf(stderr, "state: not during a network session\n"); break; }
          if (save_readonly) { std::fprintf(stderr, "state: not during a replay\n"); break; }
          if (log.writing()) { std::fprintf(stderr, "state: not while recording\n"); break; }
@@ -480,7 +486,7 @@ index 7f4e371..1eec865 100644
            show_slot("STATE " + std::to_string(state_slot) + " LOADED");
            sd_note_toast();
          }
-@@ -3711,6 +3825,9 @@ sdl_ready:
+@@ -3711,6 +3826,9 @@ sdl_ready:
        const bool fps_field = !fps_text.empty();
        const u32 flash_alpha = flash_left > 0 ? static_cast<u32>(255 * flash_left / FLASH_FRAMES) : 0;
        if (flash_left > 0) --flash_left;
@@ -490,7 +496,7 @@ index 7f4e371..1eec865 100644
        // Overlays follow Layout::primary to stay where the player's
        // looking. Dual window has no primary, so top screen.
        const Disp::Layout& osd_l = display.current_layout();
-@@ -3729,6 +3846,12 @@ sdl_ready:
+@@ -3729,6 +3847,12 @@ sdl_ready:
            const auto note = [&](const ds::sdl::Rect& r) { display.note_canvas_draw(r.x, r.y, r.w, r.h); };
            if (slot_osd) note(draw_label(c, slot_text.c_str(), false));
            if (fps_field) note(draw_label(c, fps_text.c_str(), true));
@@ -503,7 +509,7 @@ index 7f4e371..1eec865 100644
            if (menu_over_live) { menu.draw(c); display.note_canvas_draw_all(); }
            // Toast's area must be handed back even the frame it stops drawing.
            if (toast_on()) {
-@@ -3757,6 +3880,7 @@ sdl_ready:
+@@ -3757,6 +3881,7 @@ sdl_ready:
            const ds::sdl::Canvas c = tgt_canvas(target[osd_screen]);
            if (slot_osd) draw_label(c, slot_text.c_str(), false);
            if (fps_field) draw_label(c, fps_text.c_str(), true);
@@ -511,7 +517,7 @@ index 7f4e371..1eec865 100644
            if (menu_over_live) menu.draw(c);
            if (toast_on()) draw_toast_on(c);
            if (flash_alpha) for (int i = 0; i < 2; ++i) if (target[i].px) draw_flash(tgt_canvas(target[i]), flash_alpha);
-@@ -3773,13 +3897,14 @@ sdl_ready:
+@@ -3773,13 +3898,14 @@ sdl_ready:
          // Overlay layer where there is one: labels go on the panel's own
          // pixels. Flash stays below: on the overlay it'd upload every frame.
          ds::sdl::Display::CanvasView ocv;
@@ -527,7 +533,7 @@ index 7f4e371..1eec865 100644
            if (toast_on()) { draw_toast_on(c); display.note_canvas_draw_all(); }
            if (menu_over_live) { menu.draw(c); display.note_canvas_draw_all(); }
          }
-@@ -3789,6 +3914,7 @@ sdl_ready:
+@@ -3789,6 +3915,7 @@ sdl_ready:
            const ds::sdl::Canvas od = ds_canvas(osd_fb.data());
            if (slot_osd) draw_label(od, slot_text.c_str(), false);
            if (fps_field) draw_label(od, fps_text.c_str(), true);
@@ -535,7 +541,7 @@ index 7f4e371..1eec865 100644
            if (toast_on()) draw_toast_on(od);
            if (menu_over_live) menu.draw(od);
            fb[osd_screen] = osd_fb.data();
-@@ -3827,7 +3953,8 @@ sdl_ready:
+@@ -3827,7 +3954,8 @@ sdl_ready:
      audio.push(nds, fast || limiter_off);
      if (shot_pending && present) {
        shot_pending = false;
@@ -545,7 +551,21 @@ index 7f4e371..1eec865 100644
        flash_left = FLASH_FRAMES;   // from the next frame: this one is already on the panel and in the file
      }
      if (pause_pending && present) {
-@@ -4063,6 +4190,7 @@ sdl_ready:
+@@ -4003,8 +4131,13 @@ sdl_ready:
+     }
+   }
+ 
++  // Leaving: silence the device now rather than let it run dry, and buzz,
++  // while the auto state is written.
++  minui.mark("quitting");
++  audio.pause(true);
+   autosave_now();
+   flush_save();
++  minui.mark("saved");
+   discard_session_cache();
+   // Not after a DSiWare session: nothing a DSi title wrote belongs beside the DS firmware.
+   if (!fw_override.empty() && nds.firmware_override_dirty() && !nds.dsi) {
+@@ -4063,6 +4196,7 @@ sdl_ready:
    }
    log.close();
    ds::prof::report();

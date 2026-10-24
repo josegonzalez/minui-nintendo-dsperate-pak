@@ -76,6 +76,11 @@ public:
 
   bool active() const { return !dir_.empty(); }
 
+  // A "timing:" line in the log, on the clock /proc/uptime reads, so it
+  // lines up with launch.sh's own marks around the emulator. Nothing when no
+  // launcher is driving the frontend.
+  void mark(const char* what) const;
+
   // The highest slot the switcher will look at. minarch's MENU_SLOT_COUNT is 8,
   // and its marker file only ever holds 0..7; 8 is its "hidden default" and 9
   // its sleep autosave, which is DSperate's ".auto" here.

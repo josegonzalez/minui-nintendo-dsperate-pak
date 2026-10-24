@@ -120,6 +120,10 @@ dsp_export_pad_mapping() {
     # modifier the pad can actually send.
     MINUI_PAD_BUTTONS="$(echo "$_map" | sed -e 's/:[^,]*//g' -e 's/,/ /g')"
     export MINUI_PAD_BUTTONS
+    # And what to call the ones the device labels its own way: the Brick's
+    # F1 and F2 are SDL's leftstick and rightstick.
+    MINUI_BUTTON_LABELS="${PROFILE_LABELS:-}"
+    export MINUI_BUTTON_LABELS
 }
 
 # A one-off hunt for a device's spare buttons. With probe.txt beside
@@ -363,19 +367,39 @@ dsp_run_emulator() {
         set -- "$@" "$DSP_RESUME_FLAG"
     fi
 
+    dsp_mark "emulator starting"
     ./dsperate "$@"
+    _status=$?
+    dsp_mark "emulator exited"
+    return "$_status"
+}
+
+# A "timing:" line in the log: seconds since boot, to the hundredth, then
+# what just happened. DSperate writes its own on the same clock, so the two
+# line up when working out where a slow start or exit spends its time.
+dsp_mark() {
+    _up="?"
+    if [ -r /proc/uptime ]; then
+        read -r _up _ </proc/uptime
+    fi
+    echo "timing: $_up $1"
 }
 
 cleanup() {
     rm -f /tmp/stay_awake
 
-    # DSperate writes the battery save on SIGTERM, so -9 straight away loses the
-    # last save. Give it a moment before insisting.
-    killall -q -15 dsperate 2>/dev/null || true
-    sleep 2
-    killall -q -9 dsperate 2>/dev/null || true
+    # Only when the pak itself is being stopped: after a normal exit DSperate
+    # is already gone, and waiting for it would only hold up the launcher.
+    # DSperate writes the battery save on SIGTERM, so -9 straight away loses
+    # the last save. Give it a moment before insisting.
+    if pidof dsperate >/dev/null 2>&1; then
+        killall -q -15 dsperate 2>/dev/null || true
+        sleep 2
+        killall -q -9 dsperate 2>/dev/null || true
+    fi
 
     sync
+    dsp_mark "synced"
 }
 
 main() {
@@ -386,6 +410,7 @@ main() {
     exec 2>&1
 
     echo "$0" "$@"
+    dsp_mark "launch"
 
     dsp_normalize_platform
 
@@ -420,6 +445,7 @@ main() {
     dsp_migrate_config
     dsp_detect_style
     dsp_export_pad_mapping
+    dsp_mark "pad mapped"
     dsp_probe_buttons
 
     # Only on a panel whose rotation SDL cannot tell DSperate about; the fbdev

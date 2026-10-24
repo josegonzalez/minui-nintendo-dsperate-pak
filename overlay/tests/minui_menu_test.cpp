@@ -976,6 +976,15 @@ void test_shortcuts_labels() {
   CHECK(m.binding_label("mod+misc2") == "MENU+MISC2");
   h.kv["padhotkeys.modifier"] = "back";
   CHECK(m.binding_label("mod+y") == "SELECT+Y");
+  // The Brick's F1 and F2 are SDL's sticks, and go by the device's names.
+  m.set_button_labels("leftstick=F1 rightstick=F2 bad =X Y=");
+  CHECK(m.binding_label("mod+leftstick") == "SELECT+F1");
+  CHECK(m.binding_label("rightstick") == "F2");
+  CHECK(m.binding_label("bad") == "BAD");
+  h.kv["padhotkeys.modifier"] = "rightstick";
+  CHECK(m.binding_label("mod+a") == "F2+A");
+  m.set_button_labels("");
+  CHECK(m.binding_label("mod+a") == "R3+A");
 }
 
 // The pause chord and its alternate cannot both be cleared: nothing else

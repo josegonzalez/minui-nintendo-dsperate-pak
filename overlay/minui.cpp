@@ -10,6 +10,7 @@
 #include <vector>
 #ifdef __linux__
 #include <dirent.h>
+#include <time.h>
 #include <fcntl.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
@@ -104,6 +105,17 @@ void MinUi::close() {
   if (fd_ >= 0) { ::close(fd_); fd_ = -1; }
   for (int fd : volume_fds_) ::close(fd);
   volume_fds_.clear();
+#endif
+}
+
+void MinUi::mark(const char* what) const {
+  if (!active()) return;
+#ifdef __linux__
+  timespec ts{};
+  clock_gettime(CLOCK_BOOTTIME, &ts);
+  std::fprintf(stderr, "timing: %.2f %s\n", static_cast<double>(ts.tv_sec) + static_cast<double>(ts.tv_nsec) / 1e9, what);
+#else
+  std::fprintf(stderr, "timing: ? %s\n", what);
 #endif
 }
 

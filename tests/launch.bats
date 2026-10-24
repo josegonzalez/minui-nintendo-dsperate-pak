@@ -136,7 +136,7 @@ setup_h700_pad() {
 @test "the fixed-layout GUID changes nothing off h700" {
     stub_pad_guid "$DSP_H700_FIXED_GUID" "Fake Pad"
     dsp_export_pad_mapping
-    [ "$SDL_GAMECONTROLLERCONFIG" = "$DSP_H700_FIXED_GUID,Fake Pad,$DSP_MAP_TRIMUI_NOSTICK,platform:Linux" ]
+    [ "$SDL_GAMECONTROLLERCONFIG" = "$DSP_H700_FIXED_GUID,Fake Pad,$DSP_MAP_TRIMUI_BRICK,platform:Linux" ]
 }
 
 @test "no pad means no mapping rather than a broken one" {
@@ -538,11 +538,19 @@ fake_nextui() {
 @test "the pause menu is told which controls the pad mapping names" {
     stub_pad_guid "030000004c050000c405000011010000" "Fake Pad"
     dsp_export_pad_mapping
-    [ "$MINUI_PAD_BUTTONS" = "a b x y back guide start leftshoulder rightshoulder lefttrigger righttrigger dpup dpdown dpleft dpright" ]
+    [ "$MINUI_PAD_BUTTONS" = "a b x y back guide start leftshoulder rightshoulder lefttrigger righttrigger dpup dpdown dpleft dpright leftstick rightstick" ]
+    [ "$MINUI_BUTTON_LABELS" = "leftstick=F1 rightstick=F2" ]
+}
+
+@test "a device that names its buttons as SDL does exports no labels" {
+    dsp_platform_profile tg5040 smartpro
+    stub_pad_guid "030000004c050000c405000011010000" "Fake Pad"
+    dsp_export_pad_mapping
+    [ -z "$MINUI_BUTTON_LABELS" ]
 }
 
 @test "every mapping body yields its names and no numbers" {
-    for map in "$DSP_MAP_TRIMUI" "$DSP_MAP_TRIMUI_NOSTICK" "$DSP_MAP_H700_STICKS" "$DSP_MAP_H700_LSTICK" "$DSP_MAP_H700_NOSTICK"; do
+    for map in "$DSP_MAP_TRIMUI" "$DSP_MAP_TRIMUI_NOSTICK" "$DSP_MAP_TRIMUI_BRICK" "$DSP_MAP_H700_STICKS" "$DSP_MAP_H700_LSTICK" "$DSP_MAP_H700_NOSTICK"; do
         PROFILE_MAP="$map"
         stub_pad_guid "030000004c050000c405000011010000" "Fake Pad"
         dsp_export_pad_mapping
@@ -601,4 +609,36 @@ fake_nextui() {
     printf '[padhotkeys]\npause = mod+y\nscreenshot = mod+b\n' >"$DSP_CONFIG"
     dsp_migrate_config
     grep -q '^screenshot = mod+b$' "$DSP_CONFIG"
+}
+
+@test "cleanup does not wait when DSperate has already exited" {
+    printf '#!/bin/sh\nexit 1\n' >"$STUB_BIN/pidof"
+    printf '#!/bin/sh\necho "sleep $*" >>"%s"\n' "$BATS_TEST_TMPDIR/calls.log" >"$STUB_BIN/sleep"
+    printf '#!/bin/sh\necho "killall $*" >>"%s"\n' "$BATS_TEST_TMPDIR/calls.log" >"$STUB_BIN/killall"
+    chmod +x "$STUB_BIN/pidof" "$STUB_BIN/sleep" "$STUB_BIN/killall"
+    run cleanup
+    [ "$status" -eq 0 ]
+    [ ! -f "$BATS_TEST_TMPDIR/calls.log" ]
+    echo "$output" | grep -q '^timing: .* synced$'
+}
+
+@test "cleanup stops a DSperate that is still running" {
+    printf '#!/bin/sh\nexit 0\n' >"$STUB_BIN/pidof"
+    printf '#!/bin/sh\necho "sleep $*" >>"%s"\n' "$BATS_TEST_TMPDIR/calls.log" >"$STUB_BIN/sleep"
+    printf '#!/bin/sh\necho "killall $*" >>"%s"\n' "$BATS_TEST_TMPDIR/calls.log" >"$STUB_BIN/killall"
+    chmod +x "$STUB_BIN/pidof" "$STUB_BIN/sleep" "$STUB_BIN/killall"
+    run cleanup
+    [ "$status" -eq 0 ]
+    [ "$(sed -n 1p "$BATS_TEST_TMPDIR/calls.log")" = "killall -q -15 dsperate" ]
+    [ "$(sed -n 2p "$BATS_TEST_TMPDIR/calls.log")" = "sleep 2" ]
+    [ "$(sed -n 3p "$BATS_TEST_TMPDIR/calls.log")" = "killall -q -9 dsperate" ]
+}
+
+@test "timing marks name what happened" {
+    run dsp_mark "launch"
+    [ "$status" -eq 0 ]
+    case "$output" in
+    "timing: "*" launch") ;;
+    *) return 1 ;;
+    esac
 }
