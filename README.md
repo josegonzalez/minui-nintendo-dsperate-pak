@@ -139,7 +139,7 @@ Debug logs are written to the `/.userdata/$PLATFORM/logs/` folder, as `DSP.txt`.
 These lines in that log are worth knowing:
 
 - `pause menu: <look> look, font <path>` names the launcher look and the font the pause menu was given. `built-in` means no launcher font was found, and the menu draws with DSperate's own small font.
-- `controller: <name>` confirms the pad mapping was accepted. DSperate has no joystick fallback, so if this line is missing there will be no input at all.
+- `pad mapping: <guid> (<name>)` names the pad the mapping was added for, and `controller: <name>` confirms DSperate opened it. DSperate has no joystick fallback, so if the `controller:` line is missing there will be no input at all.
 - `NextUI fixed h700 pad layout, using the TrimUI button numbers` appears on `h700` with NextUI rc11 or later. Without it, the pre-rc11 per-model button numbers are in use.
 - `video: ...` names the display path that opened. Expect `fbdev scanout` on `h700`. Anything mentioning the SDL renderer means it fell back and will be slow.
 - The recompiler banner. An interpreter note instead means the JIT is off, and the emulator will be far too slow.

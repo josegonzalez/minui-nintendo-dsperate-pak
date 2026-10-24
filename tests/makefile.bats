@@ -232,7 +232,7 @@ load test_helper
     [ -n "$output" ]
     mk MINUI_OVERLAY
     overlay="$output"
-    for f in minui.h minui.cpp minui_gfx.h minui_gfx.cpp minui_menu.h minui_menu.cpp minui_shortcuts.h minui_stb.cpp stb_image.h stb_truetype.h; do
+    for f in minui.h minui.cpp minui_gfx.h minui_gfx.cpp minui_menu.h minui_menu.cpp minui_pad.h minui_shortcuts.h minui_stb.cpp stb_image.h stb_truetype.h; do
         [[ " $overlay " == *" $f "* ]] || return 1
     done
     for f in $overlay; do

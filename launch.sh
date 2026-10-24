@@ -83,55 +83,27 @@ dsp_init_env() {
 
 # DSperate opens the pad with SDL_IsGameController / SDL_GameControllerOpen and
 # has no joystick fallback, and MinUI ships no GameController mapping, so
-# without this there is no input at all. The GUID is read from the device
-# because SDL derives it from evdev ids and hashes it differently across SDL
-# versions; the mapping body comes from the platform profile.
+# without one there is no input at all. The mapping body comes from the
+# platform profile; DSperate puts the pad's GUID in front of it as it starts
+# (minui_pad.h), because SDL derives the GUID from evdev ids and hashes it
+# differently across SDL versions. Reading it here instead would mean
+# starting SDL twice per launch.
 dsp_export_pad_mapping() {
     if [ -z "$PROFILE_MAP" ]; then
         echo "No pad mapping for $PLATFORM/${DEVICE:-}, leaving SDL_GAMECONTROLLERCONFIG alone"
         return 0
     fi
 
-    _guid_out="$("$BIN_DIR/dsp-pad-guid" 2>&1)" || {
-        echo "dsp-pad-guid found no pad; DSperate will start without controller input"
-        echo "$_guid_out"
-        return 0
-    }
-
-    # Two lines, the GUID and the name, split without a process apiece.
-    _guid="${_guid_out%%
-*}"
-    _name=""
-    case "$_guid_out" in
-    *"
-"*)
-        _name="${_guid_out#*
-}"
-        _name="${_name%%
-*}"
-        ;;
-    esac
-    [ -n "$_guid" ] || return 0
-    [ -n "$_name" ] || _name="Controller"
-
+    MINUI_PAD_MAP="$PROFILE_MAP"
     # NextUI h700-rc11 and later give every H700 model the TrimUI numbers and
-    # say so through the GUID. Its SDL also carries a built-in mapping for that
-    # GUID, but this one takes priority and matches the TrimUI pads, so it is
-    # still exported rather than left to SDL.
-    _map="$PROFILE_MAP"
-    if [ -n "${PROFILE_MAP_FIXED:-}" ] && [ "$_guid" = "$DSP_H700_FIXED_GUID" ]; then
-        _map="$PROFILE_MAP_FIXED"
-        echo "NextUI fixed h700 pad layout, using the TrimUI button numbers"
-    fi
+    # say so through the GUID, which then takes this body instead. Its SDL
+    # also carries a built-in mapping for that GUID, but the pak's takes
+    # priority and matches the TrimUI pads.
+    MINUI_PAD_MAP_FIXED="${PROFILE_MAP_FIXED:-}"
+    MINUI_PAD_FIXED_GUID="$DSP_H700_FIXED_GUID"
+    export MINUI_PAD_MAP MINUI_PAD_MAP_FIXED MINUI_PAD_FIXED_GUID
 
-    export SDL_GAMECONTROLLERCONFIG="$_guid,$_name,$_map,platform:Linux"
-    echo "pad mapping: $_guid ($_name)"
-
-    # The controls this mapping names, so the pause menu only offers a
-    # modifier the pad can actually send.
-    MINUI_PAD_BUTTONS="$(echo "$_map" | sed -e 's/:[^,]*//g' -e 's/,/ /g')"
-    export MINUI_PAD_BUTTONS
-    # And what to call the ones the device labels its own way: the Brick's
+    # What to call the controls the device labels its own way: the Brick's
     # F1 and F2 are SDL's leftstick and rightstick.
     MINUI_BUTTON_LABELS="${PROFILE_LABELS:-}"
     export MINUI_BUTTON_LABELS

@@ -250,7 +250,7 @@ Every tier hands the menu a different canvas, and the drawing is straight-alpha 
 | `MINUI_FONT` | NextUI: `font1.ttf`, or `font2.ttf` for `font=0`, or the file `font=` names. MinUI: `BPreplayBold-unhinted.otf`. Empty when the card has none, which draws with DSperate's 5x7 font |
 | `MINUI_COLOR1..7` | NextUI's `color1..7` as written (`0xRRGGBBAA`); unset ones keep NextUI's defaults |
 | `MINUI_PROFILE_INI` | The profile the config was seeded from, which Shortcuts > Defaults restores |
-| `MINUI_PAD_BUTTONS` | The control names in the exported pad mapping, which the Shortcuts page's modifier is picked from. Unset with no mapping |
+| `MINUI_PAD_BUTTONS` | The control names in the pad mapping DSperate added, which the Shortcuts page's modifier is picked from. Set by DSperate itself, not `launch.sh`; unset with no mapping |
 | `MINUI_BUTTON_LABELS` | `name=LABEL` pairs for buttons the device labels differently from SDL, such as the Brick's `leftstick=F1 rightstick=F2`. Empty elsewhere |
 | `MINUI_NOTIFY_SCREENSHOT` | `0` when NextUI's `notifyScreenshot=0`, else `1`; stock MinUI has no such setting |
 
@@ -300,9 +300,9 @@ That tap has one trap. MENU+VOL is the launcher's brightness chord, which its ow
 
 NextUI h700-rc11 changed how its SDL presents the built-in Anbernic pad. Before rc11 the button numbers depended on the model, which is why `config/platform.sh` carries three per-model `DSP_MAP_H700_*` bodies. From rc11, every H700 model reports the TrimUI (tg5040) numbers, L2/R2 become axes 2 and 5, and the pad's GUID changes to `19000000010000000100000000016e01`.
 
-`dsp_export_pad_mapping` picks the body by that GUID: on it, h700 uses `PROFILE_MAP_FIXED`, which is `DSP_MAP_TRIMUI` or `DSP_MAP_TRIMUI_NOSTICK`; on anything else it keeps the per-model body. This is the check NextUI's [Porting NextUI Paks to H700](https://github.com/pvaibhav/NextUI/wiki/Porting-NextUI-Paks-to-H700#built-in-controls-in-sdl) page recommends, and it follows the real state rather than a version number: `SDL_JOYSTICK_H700_FIXED_LAYOUT=0` brings back both the old numbers and the old GUID. `PROFILE_MAP_FIXED` is empty on every other platform, so a TrimUI pad can never take this path.
+DSperate picks the body by that GUID, as it starts (`MinUi::add_pad_mapping`, with the choice itself in `minui_pad.h`). `dsp_export_pad_mapping` only hands it the bodies, as `MINUI_PAD_MAP` and `MINUI_PAD_MAP_FIXED`, and the GUID to look for, as `MINUI_PAD_FIXED_GUID`. Reading the GUID in `launch.sh` meant running `dsp-pad-guid`, which started SDL a second time on every launch; it is now only there for `--probe`. Once SDL is up, the first joystick's GUID goes in front of the right body and the result goes to `SDL_GameControllerAddMapping`, before the frontend looks for a pad. On the fixed GUID, h700 uses `PROFILE_MAP_FIXED`, which is `DSP_MAP_TRIMUI` or `DSP_MAP_TRIMUI_NOSTICK`; on anything else it keeps the per-model body. The log names the GUID as `pad mapping: <guid> (<name>)`. This is the check NextUI's [Porting NextUI Paks to H700](https://github.com/pvaibhav/NextUI/wiki/Porting-NextUI-Paks-to-H700#built-in-controls-in-sdl) page recommends, and it follows the real state rather than a version number: `SDL_JOYSTICK_H700_FIXED_LAYOUT=0` brings back both the old numbers and the old GUID. `PROFILE_MAP_FIXED` is empty on every other platform, so a TrimUI pad can never take this path.
 
-rc11's SDL also ships a built-in mapping for the new GUID, but the pak still exports its own. An exported mapping takes priority, and the built-in one does not match the TrimUI bodies the pak uses everywhere else.
+rc11's SDL also ships a built-in mapping for the new GUID, but the pak still adds its own. An added mapping replaces the built-in one for that GUID, and the built-in one does not match the TrimUI bodies the pak uses everywhere else.
 
 The per-model bodies only matter for pre-rc11 builds and can go once those are no longer worth supporting.
 

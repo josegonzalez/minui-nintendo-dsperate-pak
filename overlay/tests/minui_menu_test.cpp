@@ -9,6 +9,7 @@
 // launcher actually writes.
 #include "frontend/sdl/minui_menu.h"
 #include "frontend/sdl/minui_gfx.h"
+#include "frontend/sdl/minui_pad.h"
 #include "frontend/sdl/minui_shortcuts.h"
 #include "frontend/sdl/menu.h"
 #include "frontend/sdl/settings.h"
@@ -1095,6 +1096,41 @@ void test_shortcuts_defaults() {
 }
 
 // ---------------------------------------------------------------------------
+// The pad's mapping, put together from SDL's GUID and the pak's bodies
+
+namespace pad = ds::sdl::minui_pad;
+
+void test_pad_mapping() {
+  const std::string body = "a:b1,b:b0,guide:b8,lefttrigger:a2,dpup:h0.1";
+  const std::string fixed = "a:b3,b:b4,guide:b11";
+  const std::string fixed_guid = "19000000010000000100000000016e01";
+  // The GUID in front, the name, the body, and the platform.
+  pad::Mapping m = pad::choose("0300a3845e0400008e02000014010000", "Xbox 360 Controller", body, "", fixed_guid);
+  CHECK(m.sdl == "0300a3845e0400008e02000014010000,Xbox 360 Controller," + body + ",platform:Linux");
+  CHECK(m.buttons == "a b guide lefttrigger dpup");
+  CHECK(!m.fixed);
+  // NextUI's fixed h700 layout takes the other body, and only by its GUID.
+  m = pad::choose(fixed_guid, "ANBERNIC-keys", body, fixed, fixed_guid);
+  CHECK(m.fixed);
+  CHECK(m.sdl == fixed_guid + ",ANBERNIC-keys," + fixed + ",platform:Linux");
+  CHECK(m.buttons == "a b guide");
+  m = pad::choose("19000000010000000100000000010000", "ANBERNIC-keys", body, fixed, fixed_guid);
+  CHECK(!m.fixed);
+  CHECK(m.buttons == "a b guide lefttrigger dpup");
+  // Off h700 there is no fixed body, so the GUID changes nothing.
+  m = pad::choose(fixed_guid, "Pad", body, "", fixed_guid);
+  CHECK(!m.fixed);
+  CHECK(m.buttons == "a b guide lefttrigger dpup");
+  // A comma in the name would end its field; no name at all gets one.
+  CHECK(pad::choose("00ff", "Pad, wired", "a:b1", "", "").sdl == "00ff,Pad wired,a:b1,platform:Linux");
+  CHECK(pad::choose("00ff", "", "a:b1", "", "").sdl == "00ff,Controller,a:b1,platform:Linux");
+  // No body or no GUID: nothing, rather than a mapping SDL would refuse.
+  CHECK(pad::choose("00ff", "Pad", "", "", "").sdl.empty());
+  CHECK(pad::choose("", "Pad", body, "", "").sdl.empty());
+  CHECK(pad::choose("", "Pad", body, "", "").buttons.empty());
+}
+
+// ---------------------------------------------------------------------------
 // The screenshot's name: NextUI's getDisplayName, then its map.txt alias
 
 void test_display_name() {
@@ -1380,6 +1416,7 @@ int main() {
   test_shortcuts_keep_a_way_in();
   test_shortcuts_modifier();
   test_shortcuts_defaults();
+  test_pad_mapping();
   test_display_name();
   test_screenshot_notice_switch();
   test_notice_timing();

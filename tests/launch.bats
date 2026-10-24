@@ -87,73 +87,50 @@ setup() {
     [ ! -f "$DSP_CONFIG" ]
 }
 
-@test "the pad mapping is assembled from the device GUID and the profile body" {
+@test "the pad mapping body is handed to DSperate, which reads the GUID itself" {
+    unset SDL_GAMECONTROLLERCONFIG
     dsp_export_pad_mapping
-    [ -n "$SDL_GAMECONTROLLERCONFIG" ]
-    # guid,name,body,platform:Linux
-    case "$SDL_GAMECONTROLLERCONFIG" in
-    "030000004c050000c405000011010000,Fake Pad,"*",platform:Linux") ;;
-    *)
-        echo "unexpected: $SDL_GAMECONTROLLERCONFIG"
-        return 1
-        ;;
-    esac
-    [ "${SDL_GAMECONTROLLERCONFIG#*guide:b}" != "$SDL_GAMECONTROLLERCONFIG" ]
+    [ "$MINUI_PAD_MAP" = "$DSP_MAP_TRIMUI_BRICK" ]
+    [ -z "$MINUI_PAD_MAP_FIXED" ]
+    [ "$MINUI_PAD_FIXED_GUID" = "$DSP_H700_FIXED_GUID" ]
+    # Exported, so DSperate sees them, and SDL is left to DSperate.
+    [ "$(sh -c 'echo "$MINUI_PAD_MAP"')" = "$DSP_MAP_TRIMUI_BRICK" ]
+    [ -z "${SDL_GAMECONTROLLERCONFIG:-}" ]
 }
 
-# Re-root the fake card on an h700 device whose pad reports <guid>.
+@test "mapping the pad does not start SDL a second time" {
+    printf '#!/bin/sh\necho ran >>"%s"\n' "$BATS_TEST_TMPDIR/pad-guid.log" >"$PAK_DIR/$PLATFORM/dsp-pad-guid"
+    chmod +x "$PAK_DIR/$PLATFORM/dsp-pad-guid"
+    dsp_export_pad_mapping
+    [ ! -f "$BATS_TEST_TMPDIR/pad-guid.log" ]
+}
+
+# Re-root the fake card on an h700 device.
 setup_h700_pad() {
     setup_launch h700 "$1"
-    unset LD_LIBRARY_PATH SDL_GAMECONTROLLERCONFIG
+    unset LD_LIBRARY_PATH MINUI_PAD_MAP MINUI_PAD_MAP_FIXED
     dsp_platform_profile h700 "$1"
     dsp_init_env
-    stub_pad_guid "$2" "ANBERNIC-keys"
 }
 
-@test "NextUI's fixed h700 layout takes the TrimUI mapping" {
-    setup_h700_pad rg40xxh "$DSP_H700_FIXED_GUID"
+@test "an h700 model passes its own body and NextUI's fixed-layout one" {
+    setup_h700_pad rg40xxh
     dsp_export_pad_mapping
-    [ "$SDL_GAMECONTROLLERCONFIG" = "$DSP_H700_FIXED_GUID,ANBERNIC-keys,$DSP_MAP_TRIMUI,platform:Linux" ]
-}
+    [ "$MINUI_PAD_MAP" = "$DSP_MAP_H700_STICKS" ]
+    [ "$MINUI_PAD_MAP_FIXED" = "$DSP_MAP_TRIMUI" ]
 
-@test "NextUI's fixed h700 layout on a stickless model takes the stickless TrimUI mapping" {
-    setup_h700_pad rg35xxplus "$DSP_H700_FIXED_GUID"
+    setup_h700_pad rg35xxplus
     dsp_export_pad_mapping
-    [ "$SDL_GAMECONTROLLERCONFIG" = "$DSP_H700_FIXED_GUID,ANBERNIC-keys,$DSP_MAP_TRIMUI_NOSTICK,platform:Linux" ]
-}
-
-@test "an h700 pad on the old layout keeps the per-model mapping" {
-    # Pre-rc11 NextUI, or SDL_JOYSTICK_H700_FIXED_LAYOUT=0.
-    setup_h700_pad rg40xxh 19000000010000000100000000010000
-    dsp_export_pad_mapping
-    [ "$SDL_GAMECONTROLLERCONFIG" = "19000000010000000100000000010000,ANBERNIC-keys,$DSP_MAP_H700_STICKS,platform:Linux" ]
-
-    setup_h700_pad rg35xxplus 19000000010000000100000000010000
-    dsp_export_pad_mapping
-    [ "$SDL_GAMECONTROLLERCONFIG" = "19000000010000000100000000010000,ANBERNIC-keys,$DSP_MAP_H700_NOSTICK,platform:Linux" ]
-}
-
-@test "the fixed-layout GUID changes nothing off h700" {
-    stub_pad_guid "$DSP_H700_FIXED_GUID" "Fake Pad"
-    dsp_export_pad_mapping
-    [ "$SDL_GAMECONTROLLERCONFIG" = "$DSP_H700_FIXED_GUID,Fake Pad,$DSP_MAP_TRIMUI_BRICK,platform:Linux" ]
-}
-
-@test "no pad means no mapping rather than a broken one" {
-    printf '#!/bin/sh\nexit 1\n' >"$PAK_DIR/$PLATFORM/dsp-pad-guid"
-    chmod +x "$PAK_DIR/$PLATFORM/dsp-pad-guid"
-    unset SDL_GAMECONTROLLERCONFIG
-    run dsp_export_pad_mapping
-    [ "$status" -eq 0 ]
-    [ -z "${SDL_GAMECONTROLLERCONFIG:-}" ]
+    [ "$MINUI_PAD_MAP" = "$DSP_MAP_H700_NOSTICK" ]
+    [ "$MINUI_PAD_MAP_FIXED" = "$DSP_MAP_TRIMUI_NOSTICK" ]
 }
 
 @test "an unsupported platform yields no mapping" {
     dsp_platform_profile miyoomini ""
-    unset SDL_GAMECONTROLLERCONFIG
+    unset MINUI_PAD_MAP
     run dsp_export_pad_mapping
     [ "$status" -eq 0 ]
-    [ -z "${SDL_GAMECONTROLLERCONFIG:-}" ]
+    [ -z "${MINUI_PAD_MAP:-}" ]
 }
 
 @test "bundled binaries come first on LD_LIBRARY_PATH, then NextUI, then the system" {
@@ -535,33 +512,15 @@ fake_nextui() {
     [ -f "$MINUI_PROFILE_INI" ]
 }
 
-@test "the pause menu is told which controls the pad mapping names" {
-    stub_pad_guid "030000004c050000c405000011010000" "Fake Pad"
+@test "the pause menu is told what the Brick calls its F1 and F2" {
     dsp_export_pad_mapping
-    [ "$MINUI_PAD_BUTTONS" = "a b x y back guide start leftshoulder rightshoulder lefttrigger righttrigger dpup dpdown dpleft dpright leftstick rightstick" ]
     [ "$MINUI_BUTTON_LABELS" = "leftstick=F1 rightstick=F2" ]
 }
 
 @test "a device that names its buttons as SDL does exports no labels" {
     dsp_platform_profile tg5040 smartpro
-    stub_pad_guid "030000004c050000c405000011010000" "Fake Pad"
     dsp_export_pad_mapping
     [ -z "$MINUI_BUTTON_LABELS" ]
-}
-
-@test "every mapping body yields its names and no numbers" {
-    for map in "$DSP_MAP_TRIMUI" "$DSP_MAP_TRIMUI_NOSTICK" "$DSP_MAP_TRIMUI_BRICK" "$DSP_MAP_H700_STICKS" "$DSP_MAP_H700_LSTICK" "$DSP_MAP_H700_NOSTICK"; do
-        PROFILE_MAP="$map"
-        stub_pad_guid "030000004c050000c405000011010000" "Fake Pad"
-        dsp_export_pad_mapping
-        case " $MINUI_PAD_BUTTONS " in
-        *" guide "*) ;;
-        *) return 1 ;;
-        esac
-        case "$MINUI_PAD_BUTTONS" in
-        *:* | *,* | *[0-9].*) return 1 ;;
-        esac
-    done
 }
 
 @test "probe.txt runs the probe once, and nothing runs without it" {

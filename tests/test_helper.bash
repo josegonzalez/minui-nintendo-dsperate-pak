@@ -16,12 +16,6 @@ pak_platforms() {
     jq -r '.platforms | join(" ")' "$REPO_ROOT/pak.json"
 }
 
-# Replace the current platform's dsp-pad-guid with one reporting <guid> <name>.
-stub_pad_guid() {
-    printf '#!/bin/sh\nprintf "%%s\\n" "%s" "%s"\n' "$1" "$2" >"$PAK/$PLATFORM/dsp-pad-guid"
-    chmod +x "$PAK/$PLATFORM/dsp-pad-guid"
-}
-
 # Build a fake pak tree and source launch.sh with main() suppressed.
 setup_launch() {
     SDCARD_PATH="$BATS_TEST_TMPDIR/SDCARD"
@@ -51,8 +45,6 @@ setup_launch() {
     PATH="$STUB_BIN:$PATH"
     export PATH STUB_BIN
 
-    # A pad-guid that reports a known GUID, so the mapping assembly is testable.
-    stub_pad_guid "030000004c050000c405000011010000" "Fake Pad"
 
     PAK_DIR="$PAK"
     export PAK_DIR
