@@ -361,7 +361,7 @@ push: release
 lint:
 	shellcheck -s sh launch.sh config/platform.sh
 	shellcheck -s bash scripts/*.sh
-	shfmt -l -d -i 4 launch.sh config/platform.sh scripts/*.sh
+	shfmt -l -d -i 4 launch.sh config/platform.sh scripts/*.sh tests/*.bash
 
 test:
 	bats tests/

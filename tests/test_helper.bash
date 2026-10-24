@@ -45,7 +45,6 @@ setup_launch() {
     PATH="$STUB_BIN:$PATH"
     export PATH STUB_BIN
 
-
     PAK_DIR="$PAK"
     export PAK_DIR
 
