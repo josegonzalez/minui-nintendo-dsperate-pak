@@ -517,7 +517,8 @@ void test_controls_hides_shortcuts() {
   h.pad = true;
   h.pad_keys = {"pad.a", "padhotkeys.modifier", "padhotkeys.quit", "padhotkeys.pause.alt",
                 "padhotkeys.fast_forward", "padhotkeys.mute", "padhotkeys.fullscreen",
-                "padhotkeys.volume_down.alt", "padhotkeys.lid.alt", "padhotkeys.quit.alt"};
+                "padhotkeys.volume_down.alt", "padhotkeys.lid.alt", "padhotkeys.quit.alt",
+                "padhotkeys.screen_swap.alt", "padhotkeys.fullscreen.alt", "pad.b"};
   h.rows = static_cast<int>(h.pad_keys.size());
   MinUiMenu m(true);
   m.set_settings_host(&h);
@@ -526,11 +527,7 @@ void test_controls_hides_shortcuts() {
   m.input(press(B::BTN_DOWN));
   m.face_presses(1u << 2);                                           // clear
   m.input(0);
-  CHECK(h.kv["padhotkeys.lid.alt"] == "none");
-  m.input(press(B::BTN_DOWN));
-  m.face_presses(1u << 2);
-  m.input(0);
-  CHECK(h.kv["padhotkeys.quit.alt"] == "none");
+  CHECK(h.kv["pad.b"] == "none");
   m.input(press(B::BTN_DOWN));                                       // wraps to the top
   m.face_presses(1u << 2);
   m.input(0);
@@ -540,8 +537,11 @@ void test_controls_hides_shortcuts() {
   CHECK(!h.kv.count("padhotkeys.fast_forward"));
   CHECK(!h.kv.count("padhotkeys.mute"));
   CHECK(!h.kv.count("padhotkeys.volume_down.alt"));
+  CHECK(!h.kv.count("padhotkeys.lid.alt"));
+  CHECK(!h.kv.count("padhotkeys.quit.alt"));
+  CHECK(!h.kv.count("padhotkeys.screen_swap.alt"));
   draw_everywhere(m, "the controls page without shortcuts");
-  // The keyboard column hides nothing.
+  // The keyboard column keeps its chords.
   m.input(press(B::BTN_L));
   m.input(press(B::BTN_DOWN));
   m.face_presses(1u << 2);

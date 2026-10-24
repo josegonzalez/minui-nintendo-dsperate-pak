@@ -537,7 +537,8 @@ MinUiMenu::Result MinUiMenu::handle_settings(u32 presses) {
 }
 
 // The host's rows the Controls page shows. With a pad, the Shortcuts page
-// owns the modifier and its chords, so the pad column leaves them out. The
+// owns the modifier and its chords, so the pad column leaves them out, and
+// their second bindings, the "(2)" rows upstream adds once one is bound. The
 // launcher owns the volume, and the pak is always full screen, so neither
 // column offers those hotkeys.
 std::vector<int> MinUiMenu::control_rows() const {
@@ -549,7 +550,7 @@ std::vector<int> MinUiMenu::control_rows() const {
     const std::string key = host_->binding(bind_pad_, i).key;
     bool hidden = shortcuts && key == "padhotkeys.modifier";
     for (const Shortcut& sc : kShortcuts)
-      if (shortcuts && key == section + sc.key) hidden = true;
+      if (shortcuts && (key == section + sc.key || key == section + sc.key + ".alt")) hidden = true;
     for (const char* name : kLauncherOwns)
       if (key == section + name || key == section + name + ".alt") hidden = true;
     if (!hidden) out.push_back(i);

@@ -274,7 +274,7 @@ The modifier steps through MENU, SELECT, START, L3, R3 and SDL's `misc1` and `pa
 
 The page will not clear both `pause` and `pause.alt`, since nothing else opens the menu that binds them again. Y restores the modifier and every key from the profile the config was seeded from (`MINUI_PROFILE_INI`), after a second press. X and Y go by position on a pad, as on the Controls page. The Controls page's own Defaults stays upstream's for the `[pad]` rows, since `bind()` cannot take the profiles' values for those back (it refuses `pad.stylus_axis = right`, wanting a captured axis); the chords it also resets are then put back from the profile, as Y here does.
 
-With a pad, the Controls page's pad column leaves out the modifier and every key the Shortcuts page binds, held fast forward included, so each chord is changed in one place. Both columns also leave out `volume_up`, `volume_down`, `mute` and `fullscreen`: the launcher owns the volume, and the pak always runs full screen.
+With a pad, the Controls page's pad column leaves out the modifier and every key the Shortcuts page binds, held fast forward included, along with their second bindings (the `.alt` "(2)" rows upstream adds once one is bound), so each chord is changed in one place. Both columns also leave out `volume_up`, `volume_down`, `mute` and `fullscreen`: the launcher owns the volume, and the pak always runs full screen.
 
 ### The layout notice
 
