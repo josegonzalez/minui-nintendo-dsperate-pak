@@ -11,6 +11,8 @@
 //  - COLOUR, a function of the pixel alone, baked into one table with an
 //    entry for each of the DS's 2^18 colours and looked up on each
 //    256-pixel DS line before it is scaled. That works on every display tier.
+//  - GLOW, light spread from bright parts onto their surroundings, blurred
+//    at DS resolution after COLOUR, so it also works on every tier.
 //  - PATTERN, a function of where a panel pixel sits inside its DS pixel,
 //    precomputed per view as one row of multipliers per class of panel row,
 //    and applied to the scaled rows on the scanline tiers. The patterns that
@@ -113,11 +115,19 @@ private:
 // pixel (0..1, left to right and top to bottom): out = c * mul + add, per
 // channel (r, g, b). `ax`/`ay` are DS pixels per panel pixel (<= 1), the
 // shaders' anti-aliasing width; the RG DS patterns fade in over 1x..2x by it.
-void pattern_at(Pattern p, double fx, double fy, double ax, double ay, double mul[3], double add[3]);
+// `bright`, when asked for, is the multiplier for the brightest pixels; a
+// pattern that spreads (pattern_spread) blends between the two by a pixel's
+// brightness, and for the others the two are the same.
+void pattern_at(Pattern p, double fx, double fy, double ax, double ay, double mul[3], double add[3], double bright[3] = nullptr);
+// Whether `p` changes with a pixel's brightness, and over which range of the
+// channels' mean it moves from mul to bright (smoothstep, 0..255): `crt`'s
+// beam widens as it brightens, and `rgb_stripes` drops its stripes on
+// highlights as rgds-core's vivid_lcd does.
+bool pattern_spread(Pattern p, u8& lo, u8& hi);
 
 // Owns the tables a Gpu::PatternRows points at.
 struct PatternStore {
-  std::vector<u8> mul, add, plain;
+  std::vector<u8> mul, add, plain, bright, weight;
   std::vector<u16> row_class;
   ds::gpu::Gpu::PatternRows rows;
   u32 classes = 0;
@@ -131,9 +141,18 @@ struct PatternStore {
 // has no table.
 bool build_pattern(Pattern p, u32 rect_w, u32 rect_h, u32 x0, u32 x1, PatternStore& out);
 
-// Gpu::ScaleTarget::modulate: n pixels of src through one class's row.
-void modulate_row(const u32* src, const u8* mul, const u8* add, u32 n, u32* dst);
-namespace ref { void modulate_row(const u32* src, const u8* mul, const u8* add, u32 n, u32* dst); }
+// The spread's weights: smoothstep from lo to hi, 0..255, by the mean of a
+// pixel's channels.
+void spread_weights(u8 lo, u8 hi, u8 out[256]);
+// The mean the kernels index `weight` by: (b + g + r) * 21846 >> 16.
+inline u32 channel_mean(u32 b, u32 g, u32 r) { return ((b + g + r) * 21846u) >> 16; }
+// n pixels of src through one class's row. With `bright` (else null), each
+// pixel's multipliers move from mul to bright by weight[mean] / 255, in
+// fixed point both versions share.
+void modulate_row(const u32* src, const u8* mul, const u8* bright, const u8* weight, const u8* add, u32 n, u32* dst);
+namespace ref { void modulate_row(const u32* src, const u8* mul, const u8* bright, const u8* weight, const u8* add, u32 n, u32* dst); }
+// Gpu::ScaleTarget::modulate: row class `cls` of `p` over src.
+void modulate_class(const ds::gpu::Gpu::PatternRows& p, u32 cls, const u32* src, u32* dst);
 
 // sharp-bilinear's sample positions for the bilinear path: `sx`/`wx` over the
 // drawn columns as Gpu::ScaleTarget::lin_sx/lin_wx, and the rows as
@@ -147,12 +166,60 @@ void build_sharp(u32 rect_w, u32 rect_h, u32 x0, u32 x1, std::vector<u16>& sx, s
 // (0/90/180/270) as the composite is. Writes black at the pattern's alpha.
 void draw_mask(Pattern p, u32* stage, int panel_w, int px0, int px1, int py0, int py1, int nx, int ny, int rot);
 
+// ---- glow ------------------------------------------------------------------
+
+// GLOW: light spread from the picture onto what is around it, at DS
+// resolution after COLOUR and before the scaler, so it works on every display
+// path. A Gaussian blur of the light (all of it, or for bloom only what is
+// above the threshold), screen-blended back over the picture: c + k g (1 - c).
+// Halation tints it warm and spreads it wider, as light scattered in a CRT's
+// glass does. The blur needs the lines below each one, so the scaler holds
+// back `radius` lines (Gpu::ScaleTarget::filter_*).
+struct GlowSpec {
+  Glow kind = Glow::Off;    // resolved: never Auto
+  double strength = 0.0;    // 0..1
+  int radius = 0;           // DS pixels, 1..8
+  double threshold = 0.0;   // bloom: 0..1
+};
+// The kind's own values, for a row left on auto.
+GlowSpec glow_defaults(Glow kind, bool for_crt = false);
+// The rows as set: GLOW (auto resolves by `crt_drawn`), then GLOW STRENGTH,
+// GLOW RADIUS and BLOOM THRESHOLD, "auto" or a number each.
+GlowSpec glow_spec(Glow kind, const std::string& strength, const std::string& radius, const std::string& threshold, bool crt_drawn);
+bool parse_glow(const std::string& v, Glow& out);
+const char* glow_name(Glow g);
+constexpr int GLOW_MAX_RADIUS = 8;
+
+// One screen's glow. configure() between frames; push and pull on whichever
+// thread scales that screen, in line order; frame() for a whole frame copy.
+class GlowFilter {
+public:
+  void configure(const GlowSpec& s);
+  bool on() const { return spec_.kind != Glow::Off && spec_.strength > 0.0 && r_ > 0; }
+  const GlowSpec& spec() const { return spec_; }
+  u32 delay() const { return static_cast<u32>(r_); }
+  void push(u32 line, const u32* src);
+  void pull(u32 line, u32* out) const;
+  void frame(const u32* src, u32* dst);
+  static void push_hook(void* self, u32 line, const u32* src) { static_cast<GlowFilter*>(self)->push(line, src); }
+  static void pull_hook(void* self, u32 line, u32* out) { static_cast<GlowFilter*>(self)->pull(line, out); }
+private:
+  GlowSpec spec_;
+  int r_ = 0;
+  u32 ring_ = 1;
+  std::vector<u16> w_;              // 2r + 1 weights, summing to 256
+  u8 pass_[256] = {};               // the light that glows, per channel value
+  u32 k_[3] = {};                   // per channel (r, g, b): strength x tint, 0..256
+  std::vector<u32> orig_;           // ring_ lines as pushed
+  std::vector<u16> blur_;           // ring_ lines x 3 channels x SCREEN_W, blurred across, x256
+};
+
 // ---- timing ----------------------------------------------------------------
 
 // MINUI_SHADER_TIMING=1 (launch.sh, from shader-timing.txt): the hooks time
 // themselves, and once a frame the frontend calls timing_frame(), which
 // logs the average every five seconds.
 bool timing_on();
-void timing_frame(u32 now_ms, Colour c, Pattern p);
+void timing_frame(u32 now_ms, Colour c, Pattern p, Glow g);
 
 } // namespace ds::sdl::shader

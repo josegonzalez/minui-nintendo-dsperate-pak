@@ -1356,6 +1356,16 @@ void test_shader_rows() {
   }
   CHECK(MinUiMenu::setting_notice("video.colour", "ds_classic") == "COLOUR: DS CLASSIC");
   CHECK(MinUiMenu::setting_notice("video.pattern", "scanlines") == "PATTERN: SCANLINES");
+  CHECK(MinUiMenu::setting_notice("video.glow", "halation") == "GLOW: HALATION");
+  // GLOW and its numbers step from auto.
+  m.input(press(B::BTN_DOWN));
+  m.input(press(B::BTN_DOWN));
+  m.input(press(B::BTN_RIGHT));
+  CHECK(h.kv["video.glow"] == "off");
+  m.input(press(B::BTN_DOWN));
+  m.input(press(B::BTN_RIGHT));
+  CHECK(h.kv["video.glow_strength"] == "0.05");
+  draw_everywhere(m, "the glow rows");
 }
 
 // ---------------------------------------------------------------------------

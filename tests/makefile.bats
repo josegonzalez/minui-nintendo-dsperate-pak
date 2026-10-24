@@ -378,6 +378,9 @@ shortcut_table() {
     # Both keys documented in the reference config the pak ships.
     grep -q '^+# colour = off' "$p"
     grep -q '^+# pattern = off' "$p"
+    grep -q '^+# glow = auto' "$p"
+    # GLOW holds lines back through a filter in front of the rest of the scaler.
+    grep -q '^+void Gpu::emit_line(int screen, u32 line, const u32\* src) {$' "$p"
 }
 
 @test "the shaders keep the pow the ABI gate allows" {

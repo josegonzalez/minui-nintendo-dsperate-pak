@@ -12,6 +12,6 @@ The Visual FX page's COLOUR and PATTERN rows port other people's screen shaders 
 | sharp-bilinear | Themaister | Public domain | PATTERN `sharp_bilinear` |
 | Natural Vision | ShadX, ported by Hyllian and parameterised by Sp00kyFox | None stated | COLOUR `natural_vision`. With no licence to go by, no code was copied: the maths (gamma 2.2, Y raised to 1.1 and I and Q scaled by 1.1 in NTSC YIQ, gamma 2.2) was written out afresh |
 
-PATTERN `crt` is written for this pak and comes from none of these, though its stripes are box-filtered the way rgds-core's `ds_classic` and `vivid_lcd` box-filter theirs.
+PATTERN `crt`, its beam spread and the GLOW row are written for this pak and come from none of these, though `crt`'s stripes are box-filtered the way rgds-core's `ds_classic` and `vivid_lcd` box-filter theirs.
 
 The GPL-2.0-or-later shaders are used under the "or later" terms, as GPL-3.0. The libretro originals are in [libretro/glsl-shaders](https://github.com/libretro/glsl-shaders). lcd1x and zfast_lcd are ported with the constants rgds-core gives them (`BRIGHTEN_SCANLINES 24`, `BRIGHTEN_LCD 6`, `BORDERMULT 16`).

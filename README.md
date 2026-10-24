@@ -108,16 +108,17 @@ The MENU tap is `pause.alt = mod` in the `[padhotkeys]` section of the config. C
 
 ## Visual FX and shaders
 
-Options > Visual FX has two rows for the screen shaders of [rgds-core](https://github.com/kleinrein/rgds-core), and the libretro ones it ships:
+Options > Visual FX has rows for the screen shaders of [rgds-core](https://github.com/kleinrein/rgds-core), the libretro ones it ships, and a CRT look:
 
 - COLOUR: another screen's colours, or a mood. `nds`, `natural_vision`, `nds_natural_vision`, `ds_classic`, `ds_lite`, `natural`, `vivid`, `bold`, `gba`, `warm_paper`, `cool_crisp`, `pocket_green` and `amber`. It works on every device.
 - PATTERN: what each DS pixel looks like on the panel. `sharp_bilinear`, `lcd`, `zfast_lcd`, `scanlines`, `soft_grid`, `ds_classic`, `ds_lite`, `gba`, `rgb_stripes`, `beads`, `tiles` and `crt`. It needs a screen shown larger than the DS's own, and fades in between one and two times the size, as rgds-core's do.
+- GLOW: light spread from the picture onto what is around it. `glow` spreads all of it, `bloom` only the parts brighter than BLOOM THRESHOLD, and `halation` a warm, wider light, as a CRT's glass scatters it. `auto`, the default, is the CRT pattern's own halation when that pattern is drawn, and nothing otherwise. GLOW STRENGTH and GLOW RADIUS (in DS pixels, up to 8) set how much and how far; left on AUTO they are the glow's own. It works on every device.
 
 Where a device's display engine scales the picture in hardware, PATTERN offers only `lcd`, `zfast_lcd`, `scanlines` and `soft_grid`, the ones that only darken, drawn over the picture by the display engine. BILINEAR and CHUNKY take precedence over PATTERN, and a PATTERN takes the place of LCD GRID and SEAM. The page says why when a row is off.
 
-COLOUR changes the picture behind the menu as soon as it is picked, and PATTERN when the menu closes. Save Changes decides whether they apply to every game or only this one. Screenshots, save states and the game switcher's pictures keep the game's own colours.
+COLOUR and GLOW change the picture behind the menu as soon as they are picked, and PATTERN when the menu closes. Save Changes decides whether they apply to every game or only this one. Screenshots, save states and the game switcher's pictures keep the game's own colours.
 
-They are `colour` and `pattern` in the `[video]` section of `dsperate.ini`. An unknown name is read as `off`.
+They are `colour`, `pattern`, `glow`, `glow_strength`, `glow_radius` and `bloom_threshold` in the `[video]` section of `dsperate.ini`. An unknown COLOUR or PATTERN is read as `off`, and an unknown GLOW as `auto`.
 
 rgds-core and libretro name their presets differently. In these two rows they are:
 
@@ -142,13 +143,12 @@ rgds-core and libretro name their presets differently. In these two rows they ar
 | LCD1x, zFast LCD or Sharp bilinear + Natural Vision | `natural_vision` | `lcd`, `zfast_lcd` or `sharp_bilinear` |
 | LCD1x, zFast LCD or Sharp bilinear + both colours | `nds_natural_vision` | `lcd`, `zfast_lcd` or `sharp_bilinear` |
 
-Four of them are not exactly rgds-core's:
+Three of them are not exactly rgds-core's:
 
-- Natural glow, Natural smooth and Vivid smooth keep their colours only. The glow and the smoothed diagonals read the neighbouring pixels, which these rows do not.
-- Vivid LCD keeps its stripes on the brightest colours, where rgds-core fades them out.
+- Natural glow, Natural smooth and Vivid smooth keep their colours only. Their pixel-shape glow and smoothed diagonals read the neighbouring pixels in ways GLOW does not; GLOW `glow` with COLOUR `natural` comes closest to Natural glow.
 - zFast LCD's gamma darkens a pixel before its border does rather than after, which only changes the border.
 
-`crt` is this pak's own rather than rgds-core's: scanlines with a dark gap between DS rows, under a red, green and blue stripe for each DS pixel, brightened to make up for the light they take away. It has no screen curvature, bloom or glow.
+`crt` is this pak's own rather than rgds-core's: scanlines with a dark gap between DS rows, under a red, green and blue stripe for each DS pixel, brightened to make up for the light they take away. A brighter beam is wider, so bright rows all but fill the gap and dark ones keep it. With GLOW on `auto` it brings its own faint halation. It has no screen curvature.
 
 ## Saves & States
 
@@ -189,7 +189,7 @@ These lines in that log are worth knowing:
 - `resume state <path> not found, falling back to autoload` means RESUME in the game switcher asked for a save state slot that no longer exists, so the game started from its last autosave instead.
 - `resume state <path> predates this DSperate (format N, needs M), falling back to autoload` means the slot RESUME asked for was saved by an older DSperate that wrote a format this one cannot read, so the game started from its last autosave instead.
 - `state: no state in slot` or `state: cannot load ...` means DSperate refused the state RESUME asked for. The pak exits back to the launcher rather than starting the game from a state it cannot read.
-- `shader timing: colour <name> <us>/frame, pattern <name> <us>/frame` lines, every five seconds, say what COLOUR and PATTERN cost each frame, averaged. They are only written while an empty `shader-timing.txt` sits in `/.userdata/$PLATFORM/DSP-dsperate/`. Unlike `probe.txt` it stays there until you remove it.
+- `shader timing: colour <name> <us>/frame, pattern <name> <us>/frame, glow <name> <us>/frame` lines, every five seconds, say what COLOUR, PATTERN and GLOW cost each frame, averaged. They are only written while an empty `shader-timing.txt` sits in `/.userdata/$PLATFORM/DSP-dsperate/`. Unlike `probe.txt` it stays there until you remove it.
 - `timing: <seconds> <step>` lines mark the launch, the config being ready, the launcher's look being read, the pad mapping, the emulator starting, the game running, quitting, the state being saved, the emulator exiting and the card being synced. The seconds count from when the device booted, so the gap between two lines is how long that step took.
 
 To find the numbers of buttons the pak does not use yet, create an empty `probe.txt` in `/.userdata/$PLATFORM/DSP-dsperate/` and launch a game. For the first 15 seconds, before the game appears, press each button once. Every press is written to the log as a `probe:` line, and `probe.txt` is removed so the next launch is a normal one.

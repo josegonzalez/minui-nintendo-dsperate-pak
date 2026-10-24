@@ -98,6 +98,11 @@ void test_presets() {
   CHECK(!std::strcmp(t[lin + 2].key, "video.pattern") && t[lin + 2].choices == sh::kPatterns && t[lin + 2].nchoices == sh::kPatternCount);
   CHECK(!std::strcmp(t[lin + 1].def, "off") && !std::strcmp(t[lin + 2].def, "off"));
   CHECK(t[lin + 2].depends == ds::sdl::Dep::Pattern);
+  // Then GLOW and its three numbers, auto by default.
+  CHECK(!std::strcmp(t[lin + 3].key, "video.glow") && t[lin + 3].choices == sh::kGlows && !std::strcmp(t[lin + 3].def, "auto"));
+  CHECK(!std::strcmp(t[lin + 4].key, "video.glow_strength") && t[lin + 4].depends == ds::sdl::Dep::Glow);
+  CHECK(!std::strcmp(t[lin + 5].key, "video.glow_radius") && t[lin + 5].hi == sh::GLOW_MAX_RADIUS);
+  CHECK(!std::strcmp(t[lin + 6].key, "video.bloom_threshold") && t[lin + 6].depends == ds::sdl::Dep::Bloom);
 }
 
 // Some presets written out again here from their GLSL, independently of
@@ -211,28 +216,54 @@ void test_colour_double_buffer() {
 void test_modulate_neon() {
   std::mt19937 rng(7);
   std::vector<u32> src(1400), a(1404), b(1404);
-  std::vector<u8> mul(1400 * 4), add(1400 * 4);
+  std::vector<u8> mul(1400 * 4), add(1400 * 4), bright(1400 * 4);
+  const u8 ramps[][2] = {{0, 255}, {191, 255}, {64, 65}, {200, 200}};
+  u8 weights[4][256];
+  for (int r = 0; r < 4; ++r) sh::spread_weights(ramps[r][0], ramps[r][1], weights[r]);
   for (int round = 0; round < 3; ++round) {
     for (u32& v : src) v = rng();
     for (size_t i = 0; i < mul.size(); ++i) {
       mul[i] = round == 0 ? static_cast<u8>(rng()) : round == 1 ? (i & 1 ? 255 : 0) : 128;
       add[i] = round == 0 ? static_cast<u8>(rng() & 63) : round == 1 ? (i & 2 ? 255 : 0) : 0;
+      bright[i] = round == 0 ? static_cast<u8>(rng()) : round == 1 ? (i & 4 ? 0 : 255) : 128;
     }
-    for (u32 n = 1; n <= 1300; n += n < 40 ? 1 : 37) {
-      std::fill(a.begin(), a.end(), 0x5A5A5A5Au);
-      std::fill(b.begin(), b.end(), 0x5A5A5A5Au);
-      sh::ref::modulate_row(src.data(), mul.data(), add.data(), n, a.data() + 1);
-      sh::modulate_row(src.data(), mul.data(), add.data(), n, b.data() + 1);
-      CHECK(a == b);
-      CHECK(b[0] == 0x5A5A5A5Au && b[n + 1] == 0x5A5A5A5Au);
-    }
+    for (int spread = 0; spread <= 4; ++spread)
+      for (u32 n = 1; n <= 1300; n += n < 40 ? 1 : 37) {
+        const u8* br = spread ? bright.data() : nullptr;
+        const u8* wt = spread ? weights[spread - 1] : nullptr;
+        std::fill(a.begin(), a.end(), 0x5A5A5A5Au);
+        std::fill(b.begin(), b.end(), 0x5A5A5A5Au);
+        sh::ref::modulate_row(src.data(), mul.data(), br, wt, add.data(), n, a.data() + 1);
+        sh::modulate_row(src.data(), mul.data(), br, wt, add.data(), n, b.data() + 1);
+        CHECK(a == b);
+        CHECK(b[0] == 0x5A5A5A5Au && b[n + 1] == 0x5A5A5A5Au);
+      }
   }
-  // 1.0 and nothing added is the identity.
+  // 1.0 and nothing added is the identity, spread or not.
   for (u32& v : src) v = rng();
   std::fill(mul.begin(), mul.end(), 128);
+  std::fill(bright.begin(), bright.end(), 128);
   std::fill(add.begin(), add.end(), 0);
-  sh::modulate_row(src.data(), mul.data(), add.data(), 1300, b.data());
+  sh::modulate_row(src.data(), mul.data(), nullptr, nullptr, add.data(), 1300, b.data());
   CHECK(std::equal(src.begin(), src.begin() + 1300, b.begin()));
+  sh::modulate_row(src.data(), mul.data(), bright.data(), weights[0], add.data(), 1300, b.data());
+  CHECK(std::equal(src.begin(), src.begin() + 1300, b.begin()));
+  // Black takes the dark row, white the bright one (all but exactly, at the
+  // full ramp), and the vivid_lcd ramp leaves everything below 191 dark.
+  std::fill(mul.begin(), mul.end(), 64);
+  std::fill(bright.begin(), bright.end(), 192);
+  for (const u32 c : {0xFF000000u, 0xFF101010u, 0xFFFFFFFFu, 0xFFBEBEBEu}) {
+    const u32 grey = c & 255;
+    for (const auto& r : {std::make_pair(0, 255), std::make_pair(191, 255)}) {
+      u32 out;
+      u8 wt[256];
+      sh::spread_weights(static_cast<u8>(r.first), static_cast<u8>(r.second), wt);
+      sh::modulate_row(&c, mul.data(), bright.data(), wt, add.data(), 1, &out);
+      const double w = std::min(1.0, std::max(0.0, (static_cast<int>(grey) - r.first) / double(r.second - r.first)));
+      const double m = 64 + 128 * (w * w * (3 - 2 * w));
+      CHECK(std::abs(static_cast<int>(out & 255) - static_cast<int>(std::min(255.0, std::round(grey * m / 128)))) <= 2);
+    }
+  }
 }
 
 struct Size { u32 w, h; };
@@ -268,21 +299,27 @@ void test_pattern_tables() {
             const double fy = (y - y0 + 0.5) / (y1 - y0);
             for (u32 x = 0; x < w; x += 7) {
               const u32 s = x * SCREEN_W / w, a = (s * w + 255) / 256, b = ((s + 1) * w + 255) / 256;
-              double m[3], ad[3];
-              sh::pattern_at(p, (x - a + 0.5) / (b - a), fy, ax, ay, m, ad);
+              double m[3], ad[3], br[3];
+              sh::pattern_at(p, (x - a + 0.5) / (b - a), fy, ax, ay, m, ad, br);
               const u8* mb = &st.mul[(static_cast<size_t>(c) * w + x) * 4];
               const u8* ab = &st.add[(static_cast<size_t>(c) * w + x) * 4];
+              u8 lo, hi;
+              const bool spread = sh::pattern_spread(p, lo, hi);
+              CHECK(spread == (st.rows.bright != nullptr));
               for (int ch = 0; ch < 3; ++ch) {
                 CHECK(std::fabs(mb[2 - ch] / 128.0 - std::min(m[ch], 255.0 / 128)) <= 0.5 / 128 + 1e-9);
                 CHECK(std::abs(ab[2 - ch] - byte_of(ad[ch])) == 0);
+                if (spread) CHECK(std::fabs(st.bright[(static_cast<size_t>(c) * w + x) * 4 + 2 - ch] / 128.0 - std::min(br[ch], 255.0 / 128)) <= 0.5 / 128 + 1e-9);
+                else CHECK(m[ch] == br[ch]);
               }
               CHECK(mb[3] == 128 && ab[3] == 0);
             }
           }
-          // Plain classes are exactly the identity.
+          // Plain classes are exactly the identity, bright rows included.
           for (u32 c = 0; c < st.classes; ++c) {
             bool ident = true;
-            for (u32 i = 0; i < w * 4; ++i) ident = ident && st.mul[c * w * 4 + i] == 128 && st.add[c * w * 4 + i] == 0;
+            for (u32 i = 0; i < w * 4; ++i)
+              ident = ident && st.mul[c * w * 4 + i] == 128 && st.add[c * w * 4 + i] == 0 && (st.bright.empty() || st.bright[c * w * 4 + i] == 128);
             CHECK(static_cast<bool>(st.plain[c]) == ident);
           }
         }
@@ -340,6 +377,17 @@ void test_crt() {
       for (int k = 0; k < 3; ++k) { sum[k] += m[k]; CHECK(a[k] == 0 && m[k] > 0 && m[k] < 255.0 / 128); }
     }
   for (double v : sum) CHECK(std::fabs(v / (n * n) - 1.0) < 0.1);
+  // The bright beam is wider: brighter in the gap, and near the original over the pixel.
+  double gap_dark[3], gap_bright[3], add[3], bsum[3] = {0, 0, 0};
+  sh::pattern_at(sh::Pattern::Crt, 0.5, 0.02, 0.25, 0.25, gap_dark, add, gap_bright);
+  for (int k = 0; k < 3; ++k) CHECK(gap_bright[k] > gap_dark[k] + 0.2);
+  for (int j = 0; j < n; ++j)
+    for (int i = 0; i < n; ++i) {
+      double m[3], a[3], b[3];
+      sh::pattern_at(sh::Pattern::Crt, (i + 0.5) / n, (j + 0.5) / n, 0.25, 0.25, m, a, b);
+      for (int k = 0; k < 3; ++k) bsum[k] += b[k];
+    }
+  for (double v : bsum) CHECK(std::fabs(v / (n * n) - 1.0) < 0.1);
   // At 1x it is gone, as the RG DS patterns are.
   double m[3], a[3];
   sh::pattern_at(sh::Pattern::Crt, 0.0, 0.0, 1.0, 1.0, m, a);
@@ -391,14 +439,14 @@ void test_scaler() {
     sh::ColourTable colour;
     colour.stage(sh::Colour::DsClassic, false);
     colour.finish();
-    sh::PatternStore pat;
-    CHECK(sh::build_pattern(sh::Pattern::DsClassic, W, H, 0, W, pat));
+    sh::PatternStore pat;   // crt: the spread's bright rows too
+    CHECK(sh::build_pattern(sh::Pattern::Crt, W, H, 0, W, pat) && pat.rows.bright);
     for (int hooks = 0; hooks < 2; ++hooks) {
       ds::NDS n;
       std::vector<u32> out(W * (y_hi - y_lo), 0xDEADBEEF), other(W * H);
       Gpu::ScaleTarget t{out.data(), W, H, xr.data()};
       t.y_lo = y_lo; t.y_hi = y_hi;
-      if (hooks) { t.colour_lut = colour.lut(); t.colour = sh::colour_line; t.pattern = pat.get(); t.modulate = sh::modulate_row; }
+      if (hooks) { t.colour_lut = colour.lut(); t.colour = sh::colour_line; t.pattern = pat.get(); t.modulate = sh::modulate_class; }
       n.gpu.set_scale_target(0, t);
       n.gpu.set_scale_target(1, Gpu::ScaleTarget{other.data(), W, H, xr.data()});
       n.gpu.scale_image(0, img.data());
@@ -411,7 +459,7 @@ void test_scaler() {
           if (hooks) {
             want = colour.lut()[sh::colour_index(want)];
             const size_t at = (static_cast<size_t>(pat.row_class[y]) * W + x) * 4;
-            sh::ref::modulate_row(&want, &pat.mul[at], &pat.add[at], 1, &want);
+            sh::ref::modulate_row(&want, &pat.mul[at], &pat.bright[at], pat.rows.weight, &pat.add[at], 1, &want);
           }
           if (out[(y - y_lo) * W + x] != want && ++bad < 4)
             std::fprintf(stderr, "hooks %d crop %d (%u,%u) = %08x, want %08x\n", hooks, crop, x, y, out[(y - y_lo) * W + x], want);
@@ -477,6 +525,113 @@ void test_sharp_scaler() {
       for (u32 sh = 0; sh < 32; sh += 8) bad += std::abs(static_cast<int>(got >> sh & 255) - static_cast<int>(want >> sh & 255)) > 1;
     }
   CHECK(bad == 0);
+}
+
+// ---- glow ----------------------------------------------------------------------
+
+// The rows resolve as the page says: auto is crt's own halation where crt is
+// drawn and nothing elsewhere, auto values are the kind's, and numbers clamp.
+void test_glow_spec() {
+  using G = sh::Glow;
+  CHECK(sh::glow_spec(G::Auto, "auto", "auto", "auto", false).kind == G::Off);
+  const sh::GlowSpec crt = sh::glow_spec(G::Auto, "auto", "auto", "auto", true);
+  CHECK(crt.kind == G::Halation && crt.strength == sh::glow_defaults(G::Halation, true).strength && crt.radius == 4);
+  CHECK(sh::glow_spec(G::Off, "1", "8", "0.5", true).kind == G::Off);
+  const sh::GlowSpec b = sh::glow_spec(G::Bloom, "0.4", "2", "0.8", false);
+  CHECK(b.kind == G::Bloom && b.strength == 0.4 && b.radius == 2 && b.threshold == 0.8);
+  const sh::GlowSpec c = sh::glow_spec(G::Glow, "3", "40", "x", false);
+  CHECK(c.strength == 1.0 && c.radius == sh::GLOW_MAX_RADIUS);
+  G g;
+  CHECK(sh::parse_glow("halation", g) && g == G::Halation);
+  CHECK(!sh::parse_glow("sparkle", g) && g == G::Auto);
+  CHECK(sh::kGlowCount == static_cast<u8>(G::Count));
+}
+
+// Against the same maths in double precision: a Gaussian of sigma radius/2
+// over the light (bloom's above its threshold), screen-blended back.
+void test_glow_maths() {
+  const std::vector<u32> img = test_image(13);
+  for (sh::Glow kind : {sh::Glow::Glow, sh::Glow::Bloom, sh::Glow::Halation})
+    for (int radius : {1, 3, 8}) {
+      const sh::GlowSpec spec = sh::glow_spec(kind, "auto", std::to_string(radius), "auto", false);
+      sh::GlowFilter f;
+      f.configure(spec);
+      CHECK(f.on() && f.delay() == static_cast<u32>(radius));
+      std::vector<u32> out(img.size());
+      f.frame(img.data(), out.data());
+      const double sigma = std::max(0.5, radius / 2.0);
+      std::vector<double> w(2 * radius + 1);
+      double total = 0;
+      for (int k = -radius; k <= radius; ++k) total += w[k + radius] = std::exp(-0.5 * k * k / (sigma * sigma));
+      for (double& v : w) v /= total;
+      const double thr = kind == sh::Glow::Bloom ? std::round(spec.threshold * 255) : 0;
+      const double tint[3] = {1.0, kind == sh::Glow::Halation ? 0.6 : 1.0, kind == sh::Glow::Halation ? 0.35 : 1.0};
+      int worst = 0;
+      for (int ch = 0; ch < 3; ++ch) {
+        const int sh_ = 16 - 8 * ch;
+        auto light = [&](int x, int y) {
+          x = std::min(255, std::max(0, x)); y = std::min(191, std::max(0, y));
+          const double c = (img[y * 256 + x] >> sh_) & 255;
+          return thr > 0 ? (c <= thr ? 0.0 : (c - thr) * 255 / (255 - thr)) : c;
+        };
+        for (int y = 0; y < 192; y += 5)
+          for (int x = 0; x < 256; x += 3) {
+            double g = 0;
+            for (int j = -radius; j <= radius; ++j)
+              for (int i = -radius; i <= radius; ++i) g += w[j + radius] * w[i + radius] * light(x + i, y + j);
+            const double c = (img[y * 256 + x] >> sh_) & 255;
+            const double want = c + spec.strength * tint[ch] * g * (255 - c) / 255;
+            worst = std::max(worst, std::abs(static_cast<int>((out[y * 256 + x] >> sh_) & 255) - static_cast<int>(std::lround(want))));
+          }
+      }
+      std::printf("minui_shader: glow %-8s radius %d worst %d/255 off the double-precision blur\n", sh::glow_name(kind), radius, worst);
+      CHECK(worst <= 3);
+    }
+  // Bloom leaves a picture with nothing above its threshold alone.
+  std::vector<u32> dim(img.size(), 0xFF404850u), out(img.size());
+  sh::GlowFilter f;
+  f.configure(sh::glow_spec(sh::Glow::Bloom, "1", "4", "0.5", false));
+  f.frame(dim.data(), out.data());
+  CHECK(out == dim);
+  // And off is off.
+  f.configure(sh::glow_spec(sh::Glow::Off, "1", "4", "0.5", false));
+  CHECK(!f.on());
+}
+
+// The same frame through the scaler's held-back lines comes out as the
+// whole-frame glow scaled, at every radius, with colour before it and a
+// pattern after.
+void test_glow_scaler() {
+  const std::vector<u32> img = test_image(17);
+  const u32 W = 640, H = 480;
+  const std::vector<u16> xr = nearest_xrun(W, 0, W);
+  sh::ColourTable colour;
+  colour.stage(sh::Colour::Gba, false);
+  colour.finish();
+  std::vector<u32> pre(img.size());
+  colour.apply(img.data(), pre.data(), img.size());
+  for (int radius = 1; radius <= sh::GLOW_MAX_RADIUS; ++radius) {
+    sh::GlowFilter f, g;
+    const sh::GlowSpec spec = sh::glow_spec(sh::Glow::Halation, "0.5", std::to_string(radius), "auto", false);
+    f.configure(spec);
+    g.configure(spec);
+    std::vector<u32> glowed(img.size());
+    g.frame(pre.data(), glowed.data());
+    std::vector<u32> a(W * H), b(W * H), other(W * H);
+    for (int pass = 0; pass < 2; ++pass) {
+      ds::NDS n;
+      Gpu::ScaleTarget t{pass ? b.data() : a.data(), W, H, xr.data()};
+      if (pass) {
+        t.colour_lut = colour.lut(); t.colour = sh::colour_line;
+        t.filter_delay = f.delay(); t.filter_state = &f;
+        t.filter_push = sh::GlowFilter::push_hook; t.filter_pull = sh::GlowFilter::pull_hook;
+      }
+      n.gpu.set_scale_target(0, t);
+      n.gpu.set_scale_target(1, Gpu::ScaleTarget{other.data(), W, H, xr.data()});
+      n.gpu.scale_image(0, pass ? img.data() : glowed.data());
+    }
+    CHECK(a == b);
+  }
 }
 
 // ---- stepping ------------------------------------------------------------------
@@ -554,6 +709,16 @@ void report_timing() {
     std::printf("minui_shader: colour %-18s build %6.2f ms, %6.1f us/frame\n", sh::colour_name(static_cast<sh::Colour>(i)),
                 std::chrono::duration<double, std::milli>(b1 - b0).count(), std::chrono::duration<double, std::micro>(b2 - b1).count() / 10);
   }
+  for (sh::Glow kind : {sh::Glow::Glow, sh::Glow::Bloom, sh::Glow::Halation})
+    for (int radius : {2, 4, 8}) {
+      sh::GlowFilter f;
+      f.configure(sh::glow_spec(kind, "auto", std::to_string(radius), "auto", false));
+      std::vector<u32> out(img.size());
+      const auto g0 = clk::now();
+      for (int rep = 0; rep < 10; ++rep) { f.frame(img.data(), out.data()); f.frame(img.data(), out.data()); }
+      std::printf("minui_shader: glow %-8s radius %d %6.1f us/frame (both screens)\n", sh::glow_name(kind), radius,
+                  std::chrono::duration<double, std::micro>(clk::now() - g0).count() / 10);
+    }
   for (const Size& s : kPanels) {
     std::vector<u32> row(s.w), out(s.w);
     for (u8 i = 2; i < sh::kPatternCount; ++i) {
@@ -563,7 +728,7 @@ void report_timing() {
       for (int rep = 0; rep < 10; ++rep)
         for (u32 y = 0; y < s.h; ++y) {
           const u32 c = st.row_class[y];
-          if (!st.plain[c]) sh::modulate_row(row.data(), &st.mul[c * s.w * 4], &st.add[c * s.w * 4], s.w, out.data());
+          if (!st.plain[c]) sh::modulate_class(st.rows, c, row.data(), out.data());
         }
       const auto b1 = clk::now();
       std::printf("minui_shader: pattern %-14s %4ux%-4u %u classes, %6.1f us/frame (one screen, every row)\n",
@@ -588,6 +753,9 @@ int main() {
   test_scaler();
   test_colour_comes_first();
   test_sharp_scaler();
+  test_glow_spec();
+  test_glow_maths();
+  test_glow_scaler();
   test_stepping();
   report_timing();
   std::puts("minui_shader: ok");

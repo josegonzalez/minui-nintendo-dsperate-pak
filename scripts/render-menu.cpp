@@ -10,9 +10,9 @@
 // game, fake settings, bindings, cheats and achievements, and a battery at
 // three quarters. The menu itself is the code that ships.
 //
-// It also draws one stand-in DS screen through every COLOUR and PATTERN
-// preset (minui_shader.h), with the tables that ship, the way the scanline
-// scaler applies them, as shader-<preset>-<size>.png.
+// It also draws one stand-in DS screen through every COLOUR, PATTERN and
+// GLOW preset (minui_shader.h), with the tables that ship, the way the
+// scanline scaler applies them, as shader-<preset>-<size>.png.
 #include "frontend/sdl/minui_menu.h"
 #include "frontend/sdl/minui_gfx.h"
 #include "frontend/sdl/minui_shader.h"
@@ -194,7 +194,8 @@ std::vector<u32> ds_frame() {
 // The screen alone on a w x h panel through a preset, as the scaler does it:
 // nearest runs, the colour table before them, then the pattern's class rows,
 // or sharp bilinear's sample points.
-std::vector<u32> shade_frame(const std::vector<u32>& ds_px, int w, int h, ds::sdl::shader::Colour colour, ds::sdl::shader::Pattern pattern) {
+std::vector<u32> shade_frame(const std::vector<u32>& ds_px, int w, int h, ds::sdl::shader::Colour colour, ds::sdl::shader::Pattern pattern,
+                             ds::sdl::shader::Glow glow) {
   namespace sh = ds::sdl::shader;
   ds::frontend::Layout l;
   l.mode = ds::frontend::Mode::Single;
@@ -205,8 +206,12 @@ std::vector<u32> shade_frame(const std::vector<u32>& ds_px, int w, int h, ds::sd
   sh::ColourTable table;
   table.stage(colour, pattern == sh::Pattern::ZfastLcd);
   table.finish();
-  std::vector<u32> src(ds_px.size());
-  table.apply(ds_px.data(), src.data(), src.size());
+  std::vector<u32> coloured(ds_px.size()), src(ds_px.size());
+  table.apply(ds_px.data(), coloured.data(), coloured.size());
+  // GLOW after the colour, auto being crt's own halation.
+  sh::GlowFilter glowing;
+  glowing.configure(sh::glow_spec(glow, "auto", "auto", "auto", pattern == sh::Pattern::Crt));
+  glowing.frame(coloured.data(), src.data());
   const u32 rw = static_cast<u32>(r.w), rh = static_cast<u32>(r.h);
   auto at = [&](u32 x, u32 y) { return src[std::min<u32>(y, ds::SCREEN_H - 1) * ds::SCREEN_W + std::min<u32>(x, ds::SCREEN_W - 1)]; };
   auto lerp = [](u32 a, u32 b, u32 f) {
@@ -233,8 +238,7 @@ std::vector<u32> shade_frame(const std::vector<u32>& ds_px, int w, int h, ds::sd
     } else {
       for (u32 x = 0; x < rw; ++x) row[x] = at(x * ds::SCREEN_W / rw, y * ds::SCREEN_H / rh);
       if (st.get() && !st.plain[st.row_class[y]]) {
-        const size_t c = static_cast<size_t>(st.row_class[y]) * rw * 4;
-        sh::modulate_row(row.data(), &st.mul[c], &st.add[c], rw, row.data());
+        sh::modulate_class(st.rows, st.row_class[y], row.data(), row.data());
       }
     }
     std::copy(row.begin(), row.end(), out.begin() + static_cast<long>((static_cast<u32>(r.y) + y) * static_cast<u32>(w) + static_cast<u32>(r.x)));
@@ -359,7 +363,8 @@ int main(int argc, char** argv) {
     namespace sh = ds::sdl::shader;
     using C = sh::Colour;
     using P = sh::Pattern;
-    const struct { const char* name; C c; P p; } presets[] = {
+    using G = sh::Glow;
+    const struct { const char* name; C c; P p; G g = G::Auto; } presets[] = {
       {"off", C::Off, P::Off},
       {"sharp_bilinear", C::Off, P::SharpBilinear}, {"lcd1x", C::Off, P::Lcd}, {"zfast_lcd", C::Off, P::ZfastLcd},
       {"nds_color", C::Nds, P::Off}, {"natural_vision", C::NaturalVision, P::Off},
@@ -373,12 +378,14 @@ int main(int argc, char** argv) {
       {"natural_smooth", C::Natural, P::Off}, {"vivid_smooth", C::Vivid, P::Off},
       {"pixel_beads", C::Bold, P::Beads}, {"glossy_tiles", C::Bold, P::Tiles},
       {"gba_color", C::Gba, P::Off}, {"gba_screen", C::Gba, P::Gba},
-      {"crt", C::Off, P::Crt},   // the pak's own
+      {"crt", C::Off, P::Crt},   // the pak's own, with its own halation
+      {"crt-no-glow", C::Off, P::Crt, G::Off},
+      {"glow", C::Off, P::Off, G::Glow}, {"bloom", C::Off, P::Off, G::Bloom}, {"halation", C::Off, P::Off, G::Halation},
     };
     const std::vector<u32> ds_px = ds_frame();
     for (const auto& size : {std::make_pair(640, 480), std::make_pair(1024, 768)})
       for (const auto& pr : presets) {
-        const std::vector<u32> px = shade_frame(ds_px, size.first, size.second, pr.c, pr.p);
+        const std::vector<u32> px = shade_frame(ds_px, size.first, size.second, pr.c, pr.p, pr.g);
         const std::string path = out + "/shader-" + pr.name + "-" + std::to_string(size.first) + "x" + std::to_string(size.second) + ".png";
         if (!save_png(px, size.first, size.second, path)) { std::fprintf(stderr, "cannot write %s\n", path.c_str()); std::exit(1); }
         ++written;
