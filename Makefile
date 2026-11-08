@@ -15,7 +15,7 @@ PLATFORMS := tg5040 tg5050 h700
 # unknown -D cache args) and scripts/assert-build.sh is the only thing that
 # would catch it.
 DSPERATE_REPO := https://github.com/beebono/DSperate
-DSPERATE_TAG  := v3.0.5
+DSPERATE_TAG  := v3.4.0
 
 # ── Docker toolchain images ───────────────────────────────────────────────────
 TG5040_IMAGE := ghcr.io/loveretro/tg5040-toolchain:latest
